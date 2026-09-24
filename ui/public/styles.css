@@ -106,8 +106,38 @@
   --radius-lg:     var(--r-lg);
 }
 
+/* ── Themes ──────────────────────────────────────────────────
+   Anvilmar (above) is the default. Other themes only override base tokens;
+   every component reads the aliases, so nothing else changes. */
+:root[data-theme="anvilmar-light"] {
+  --bg-0: #f4f1f8;  --bg-1: #ebe6f2;  --bg-2: #e0d9ea;  --bg-3: #d4cbe1;
+  --fg-1: #1d1729;  --fg-2: #4a4260;  --fg-3: #6f6787;  --fg-4: #a49cb8;
+  --purple-arm: #c9bddc;  --purple-arm-hi: #b3a3cd;  --purple-mid: #6b4fb0;
+  --purple-glow: #5b3fa6; --purple-deep: #ded5ec;
+  --ember-deep: #ffd9c2;  --ember: #d9530f;  --ember-hot: #c24608;  --ember-glow: #9c3805;
+  --steel: #3d6f8f;  --steel-hi: #2d5b78;
+  --sem-ok: #3b7a4f;  --sem-ok-hi: #2f6b42;  --sem-warn: #9a7016;  --sem-warn-hi: #86600f;
+  --sem-err: #a82828; --sem-err-hi: #962020;
+  --edge-top: inset 0 1px 0 rgba(255,255,255,0.7);
+  --edge-bottom: inset 0 -1px 0 rgba(0,0,0,0.08);
+  --edge-card: inset 0 1px 0 rgba(255,255,255,0.7), inset 0 -1px 0 rgba(0,0,0,0.08);
+  color-scheme: light;
+}
+
+:root[data-theme="obsidian"] {
+  --bg-0: #161616;  --bg-1: #1e1e1e;  --bg-2: #262626;  --bg-3: #303030;
+  --fg-1: #dcddde;  --fg-2: #a3a3a3;  --fg-3: #767676;  --fg-4: #4a4a4a;
+  --purple-arm: #363636;  --purple-arm-hi: #454545;  --purple-mid: #7f6df2;
+  --purple-glow: #a594ff; --purple-deep: #1e1e1e;
+  --ember-deep: #2d2650;  --ember: #7f6df2;  --ember-hot: #9585ff;  --ember-glow: #b8abff;
+  --font-display: var(--font-ui);
+}
+
 /* ── Reset ───────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { color-scheme: dark; }
+:root[data-theme="anvilmar-light"] { color-scheme: light; }
 
 html, body, #root {
   height: 100%;
@@ -144,7 +174,6 @@ html, body, #root {
   -webkit-app-region: drag;
 }
 /* macOS: reserve space for traffic lights (close/minimize/maximize) */
-[data-platform="darwin"] .header { padding-left: 80px; }
 .header-logo { width: 20px; height: 20px; object-fit: contain; }
 .header-title {
   font-family: var(--font-display);

@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useCallback } from "react";
+import { cssVar } from "../theme.js";
 
 export interface GraphNode {
   x: number; y: number;
@@ -163,7 +164,7 @@ export function GraphCanvas({ nodes, edges, renderMode, highlightSet, selectedIn
       if (isSelected) {
         ctx.beginPath();
         ctx.arc(x, y, radius + 2, 0, Math.PI * 2);
-        ctx.strokeStyle = "#ffffff";
+        ctx.strokeStyle = cssVar("--fg-1", "#ffffff");
         ctx.lineWidth = 2;
         ctx.globalAlpha = 0.9;
         ctx.stroke();
@@ -184,7 +185,7 @@ export function GraphCanvas({ nodes, edges, renderMode, highlightSet, selectedIn
       // Hover label
       if (isHovered && (renderMode === "idle" || isHighlighted || isSelected || isNeighbor)) {
         ctx.globalAlpha = 1;
-        ctx.fillStyle = "rgba(232,232,239,0.9)";
+        ctx.fillStyle = cssVar("--fg-1", "rgba(232,232,239,0.9)");
         ctx.font = `${Math.max(10, zoom * 11)}px Inter, sans-serif`;
         ctx.fillText(node.label, x + radius + 4, y + 4);
       }

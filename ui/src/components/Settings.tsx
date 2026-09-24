@@ -1,13 +1,11 @@
 import React, { useState, useEffect } from "react";
+import { ThemeSelector } from "./ThemeSelector.js";
 
 interface FileTypes { markdown: boolean; pdf: boolean; docx: boolean; html: boolean; }
 
 interface AnamnesisConfig {
   watchDirs: string[];
-  embeddingProvider: "local" | "openai";
   localModelName: string;
-  openaiApiKey?: string;
-  openaiModelName?: string;
   chunkSize: number;
   chunkOverlap: number;
   excludePatterns: string[];
@@ -23,10 +21,7 @@ interface AnamnesisConfig {
 
 const DEFAULT_CONFIG: AnamnesisConfig = {
   watchDirs: [],
-  embeddingProvider: "local",
   localModelName: "Xenova/all-MiniLM-L6-v2",
-  openaiApiKey: "",
-  openaiModelName: "text-embedding-3-small",
   chunkSize: 512,
   chunkOverlap: 64,
   excludePatterns: [".git", "node_modules", ".obsidian"],
@@ -44,12 +39,6 @@ const LOCAL_MODELS = [
   { value: "Xenova/all-MiniLM-L6-v2", label: "all-MiniLM-L6-v2 (384d, fast)" },
   { value: "BAAI/bge-base-en-v1.5", label: "bge-base-en-v1.5 (768d, better quality)" },
   { value: "BAAI/bge-small-en-v1.5", label: "bge-small-en-v1.5 (384d, smallest)" },
-];
-
-const OPENAI_MODELS = [
-  { value: "text-embedding-3-small", label: "text-embedding-3-small" },
-  { value: "text-embedding-3-large", label: "text-embedding-3-large" },
-  { value: "text-embedding-ada-002", label: "text-embedding-ada-002 (legacy)" },
 ];
 
 const DEBOUNCE_OPTIONS = [
@@ -78,11 +67,7 @@ export function Settings() {
   const dirty = config !== null && draft !== null
     && JSON.stringify(config) !== JSON.stringify(draft);
 
-  const modelChanged = config !== null && draft !== null && (
-    draft.embeddingProvider !== config.embeddingProvider ||
-    draft.localModelName !== config.localModelName ||
-    draft.openaiModelName !== config.openaiModelName
-  );
+  const modelChanged = config !== null && draft !== null && draft.localModelName !== config.localModelName;
 
   const loadConfig = () => {
     void (async () => {
@@ -161,25 +146,6 @@ export function Settings() {
           <div className="card-label">Embedding</div>
 
           <div className="form-row">
-            <span className="form-label">Provider</span>
-            <div className="radio-group">
-              <label className="radio-option">
-                <input type="radio" name="s-provider" value="local"
-                  checked={draft.embeddingProvider === "local"}
-                  onChange={() => patch("embeddingProvider", "local")} />
-                Local (offline)
-              </label>
-              <label className="radio-option">
-                <input type="radio" name="s-provider" value="openai"
-                  checked={draft.embeddingProvider === "openai"}
-                  onChange={() => patch("embeddingProvider", "openai")} />
-                OpenAI
-              </label>
-            </div>
-          </div>
-
-          {draft.embeddingProvider === "local" && (
-            <div className="form-row">
               <div className="form-label-stack">
                 <span className="form-label">Model</span>
                 <span className="form-hint">Requires re-index if changed</span>
@@ -191,7 +157,6 @@ export function Settings() {
                 {isCustomModel && <option value="__custom__">{draft.localModelName} (custom)</option>}
               </select>
             </div>
-          )}
 
           {modelChanged && (
             <div style={{ background: "var(--bg-secondary, #222)", border: "1px solid var(--color-warning, #c80)", borderRadius: 6, padding: "10px 12px", marginTop: 4 }}>
@@ -204,39 +169,13 @@ export function Settings() {
                 </button>
                 <button className="btn" disabled={saving} onClick={() => {
                   if (config) {
-                    setDraft(d => d ? {
-                      ...d,
-                      embeddingProvider: config.embeddingProvider,
-                      localModelName: config.localModelName,
-                      openaiModelName: config.openaiModelName ?? d.openaiModelName,
-                    } : d);
+                    setDraft(d => d ? { ...d, localModelName: config.localModelName } : d);
                   }
                 }}>Cancel</button>
               </div>
             </div>
           )}
 
-          {draft.embeddingProvider === "openai" && (
-            <>
-              <div className="form-row">
-                <span className="form-label">API key</span>
-                <input type="password" className="text-input" placeholder="sk-…"
-                  value={draft.openaiApiKey ?? ""}
-                  onChange={e => patch("openaiApiKey", e.target.value)} />
-              </div>
-              <div className="form-row">
-                <div className="form-label-stack">
-                  <span className="form-label">Model</span>
-                  <span className="form-hint">Requires re-index if changed</span>
-                </div>
-                <select className="select-input"
-                  value={draft.openaiModelName ?? "text-embedding-3-small"}
-                  onChange={e => patch("openaiModelName", e.target.value)}>
-                  {OPENAI_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-                </select>
-              </div>
-            </>
-          )}
         </div>
 
         {/* ── Indexing ─────────────────────────────────────────────── */}
@@ -359,12 +298,24 @@ export function Settings() {
           <div className="form-row">
             <div className="form-label-stack">
               <span className="form-label">Port</span>
-              <span className="form-hint">MCP on this port, mgmt on +1</span>
+              <span className="form-hint">http://127.0.0.1:&lt;port&gt;/mcp</span>
             </div>
             <input type="number" className="text-input text-input-sm"
               min={1024} max={65535}
               value={draft.mcpPort}
               onChange={e => patch("mcpPort", Number(e.target.value))} />
+          </div>
+        </div>
+
+        {/* ── Appearance ───────────────────────────────────────────── */}
+        <div className="card">
+          <div className="card-label">Appearance</div>
+          <div className="form-row">
+            <div className="form-label-stack">
+              <span className="form-label">Theme</span>
+              <span className="form-hint">Applies immediately</span>
+            </div>
+            <ThemeSelector />
           </div>
         </div>
 
