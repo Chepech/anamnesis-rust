@@ -160,10 +160,12 @@ fn queued_status_is_reported_then_flush_indexes_immediately() {
     let s2 = seen.clone();
     e.on_status(move |p| s2.lock().unwrap().push(p.index_status));
     std::fs::write(t.vault.join("new.md"), "new note").unwrap();
+    // Count is not pinned: FSEvents (macOS) may also replay the fixture's own writes from just
+    // before the stream started, so the queue can hold more than the one new file.
     assert!(until(|| seen.lock().unwrap().iter().any(|s| matches!(
         s,
         IndexStatus::Queued {
-            count: 1,
+            count: 1..,
             delay_ms: 60_000,
             ..
         }
