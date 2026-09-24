@@ -14,7 +14,7 @@ pub const MAX_BACKLINKS: usize = 5;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileState {
-    pub mtime_ms: i64,
+    pub mtime_ns: i64,
     pub content_hash: String,
 }
 
@@ -31,7 +31,7 @@ pub struct ChunkRow {
 #[derive(Debug, Clone)]
 pub struct FileRecord {
     pub path: String,
-    pub mtime_ms: i64,
+    pub mtime_ns: i64,
     pub content_hash: String,
     pub tags: String,
     pub chunks: Vec<ChunkRow>,
@@ -102,7 +102,7 @@ impl Store {
                 id INTEGER PRIMARY KEY,
                 path TEXT NOT NULL UNIQUE,
                 stem TEXT NOT NULL COLLATE NOCASE,
-                mtime_ms INTEGER NOT NULL DEFAULT 0,
+                mtime_ns INTEGER NOT NULL DEFAULT 0,
                 content_hash TEXT,
                 tags TEXT NOT NULL DEFAULT ''
             );
@@ -153,15 +153,15 @@ impl Store {
     pub fn file_state(&self, path: &str) -> Result<Option<FileState>> {
         Ok(self
             .conn()
-            .query_row("SELECT mtime_ms, content_hash FROM files WHERE path = ?1 AND content_hash IS NOT NULL", [path], |r| {
-                Ok(FileState { mtime_ms: r.get(0)?, content_hash: r.get(1)? })
+            .query_row("SELECT mtime_ns, content_hash FROM files WHERE path = ?1 AND content_hash IS NOT NULL", [path], |r| {
+                Ok(FileState { mtime_ns: r.get(0)?, content_hash: r.get(1)? })
             })
             .optional()?)
     }
 
     /// Records a new mtime for a file whose content hash did not change.
-    pub fn touch_file(&self, path: &str, mtime_ms: i64) -> Result<()> {
-        self.conn().execute("UPDATE files SET mtime_ms = ?2 WHERE path = ?1", params![path, mtime_ms])?;
+    pub fn touch_file(&self, path: &str, mtime_ns: i64) -> Result<()> {
+        self.conn().execute("UPDATE files SET mtime_ns = ?2 WHERE path = ?1", params![path, mtime_ns])?;
         Ok(())
     }
 
@@ -213,8 +213,8 @@ impl Store {
         let tx = conn.transaction()?;
         let id = ensure_file(&tx, &rec.path)?;
         tx.execute(
-            "UPDATE files SET mtime_ms = ?2, content_hash = ?3, tags = ?4 WHERE id = ?1",
-            params![id, rec.mtime_ms, rec.content_hash, rec.tags],
+            "UPDATE files SET mtime_ns = ?2, content_hash = ?3, tags = ?4 WHERE id = ?1",
+            params![id, rec.mtime_ns, rec.content_hash, rec.tags],
         )?;
         tx.execute("DELETE FROM chunks WHERE file_id = ?1", [id])?;
         {
@@ -321,7 +321,7 @@ impl Store {
     pub fn vector_sample(&self, max_files: usize) -> Result<Vec<VectorNode>> {
         let conn = self.conn();
         let mut st = conn.prepare(
-            "SELECT f.path, v.embedding, c.text, f.tags, f.mtime_ms
+            "SELECT f.path, v.embedding, c.text, f.tags, f.mtime_ns
              FROM chunks c JOIN files f ON f.id = c.file_id JOIN chunks_vec v ON v.rowid = c.id
              WHERE c.chunk_index = 0 ORDER BY f.path LIMIT ?1",
         )?;
@@ -331,7 +331,7 @@ impl Store {
                 vector: from_blob(&r.get::<_, Vec<u8>>(1)?),
                 text: r.get::<_, String>(2)?.chars().take(120).collect(),
                 tags: r.get(3)?,
-                last_modified: r.get(4)?,
+                last_modified: r.get::<_, i64>(4)? / 1_000_000,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -385,7 +385,7 @@ mod tests {
     }
 
     fn file(path: &str, chunks: Vec<ChunkRow>) -> FileRecord {
-        FileRecord { path: path.into(), mtime_ms: 100, content_hash: "c1".into(), tags: "a, b".into(), chunks }
+        FileRecord { path: path.into(), mtime_ns: 100_000_000, content_hash: "c1".into(), tags: "a, b".into(), chunks }
     }
 
     #[test]
@@ -421,7 +421,7 @@ mod tests {
         let s = store();
         s.replace_file(&file("/v/a.md", vec![chunk(0, "alpha", [1.0, 0.0, 0.0, 0.0]), chunk(1, "beta", [0.0, 1.0, 0.0, 0.0])])).unwrap();
         assert_eq!(s.chunk_count().unwrap(), 2);
-        assert_eq!(s.file_state("/v/a.md").unwrap(), Some(FileState { mtime_ms: 100, content_hash: "c1".into() }));
+        assert_eq!(s.file_state("/v/a.md").unwrap(), Some(FileState { mtime_ns: 100_000_000, content_hash: "c1".into() }));
         assert_eq!(s.file_state("/v/missing.md").unwrap(), None);
         assert_eq!(s.indexed_paths().unwrap(), vec!["/v/a.md"]);
     }
@@ -449,7 +449,7 @@ mod tests {
         let s = store();
         s.replace_file(&file("/v/a.md", vec![chunk(0, "x", [1.0, 0.0, 0.0, 0.0])])).unwrap();
         s.touch_file("/v/a.md", 999).unwrap();
-        assert_eq!(s.file_state("/v/a.md").unwrap().unwrap(), FileState { mtime_ms: 999, content_hash: "c1".into() });
+        assert_eq!(s.file_state("/v/a.md").unwrap().unwrap(), FileState { mtime_ns: 999, content_hash: "c1".into() });
         assert_eq!(s.chunk_count().unwrap(), 1);
     }
 

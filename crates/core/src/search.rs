@@ -162,7 +162,7 @@ mod tests {
             chunk_index: i, heading: String::new(), context_path: String::new(), text: t.to_string(),
             embed_hash: format!("h{i}"), vector: v.to_vec(),
         }).collect();
-        s.replace_file(&FileRecord { path: "/v/a.md".into(), mtime_ms: 1, content_hash: "c".into(), tags: String::new(), chunks }).unwrap();
+        s.replace_file(&FileRecord { path: "/v/a.md".into(), mtime_ns: 1, content_hash: "c".into(), tags: String::new(), chunks }).unwrap();
         s
     }
 
