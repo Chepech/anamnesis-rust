@@ -38,7 +38,8 @@ pub fn model_info(name: &str) -> ModelInfo {
 
 /// ORT keeps its peak allocation in an arena that never shrinks, and each batch pads to its
 /// longest text. Batches of 64 × 512 tokens held ~4.7 GB after a 34k-chunk index on Windows;
-/// 16 × 256 caps the padded attention buffers at 1/16 of that shape.
+/// 16 × 256 caps the padded attention buffers at 1/16 of that shape: measured on the same
+/// vault, peak 474 MB and a faster index (5m09s vs 6m13s), identical search results.
 const ORT_BATCH: usize = 16;
 const MAX_TOKENS: usize = 256;
 
