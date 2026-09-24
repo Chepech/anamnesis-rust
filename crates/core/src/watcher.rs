@@ -24,7 +24,11 @@ pub struct Watcher {
     inner: Mutex<notify::RecommendedWatcher>,
     tx: mpsc::Sender<Cmd>,
     paused: Arc<Mutex<HashSet<PathBuf>>>,
+    roots: Roots,
 }
+
+/// (canonical, as configured) per watch dir.
+type Roots = Arc<Mutex<Vec<(PathBuf, PathBuf)>>>;
 
 impl Watcher {
     pub fn start(
@@ -38,11 +42,9 @@ impl Watcher {
         let paused: Arc<Mutex<HashSet<PathBuf>>> = Arc::default();
         // FSEvents reports canonical paths (/private/var/… for /var/…); map them back to the
         // configured watch dir so filters, pause and the index all see one spelling.
-        let roots: Vec<(PathBuf, PathBuf)> = dirs
-            .iter()
-            .map(|d| (d.canonicalize().unwrap_or_else(|_| d.clone()), d.clone()))
-            .collect();
-        let (etx, p2) = (tx.clone(), paused.clone());
+        // `watch_dir` below registers each root; the callback only reads the shared list.
+        let roots: Roots = Arc::default();
+        let (etx, p2, r2) = (tx.clone(), paused.clone(), roots.clone());
         let inner = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             let Ok(ev) = res else { return };
             let structural = match ev.kind {
@@ -53,6 +55,7 @@ impl Watcher {
                 _ => false,
             };
             let paused = p2.lock().unwrap();
+            let roots = r2.lock().unwrap();
             for p in ev.paths {
                 let p = roots
                     .iter()
@@ -70,6 +73,7 @@ impl Watcher {
             inner: Mutex::new(inner),
             tx,
             paused,
+            roots,
         };
         for d in dirs {
             w.watch_dir(d)?;
@@ -115,6 +119,8 @@ impl Watcher {
     }
 
     pub fn watch_dir(&self, dir: &Path) -> Result<()> {
+        let canon = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+        self.roots.lock().unwrap().push((canon, dir.to_path_buf()));
         self.inner
             .lock()
             .unwrap()
