@@ -36,6 +36,12 @@ pub fn model_info(name: &str) -> ModelInfo {
     ModelInfo { name, dim, model }
 }
 
+/// ORT keeps its peak allocation in an arena that never shrinks, and each batch pads to its
+/// longest text. Batches of 64 × 512 tokens held ~4.7 GB after a 34k-chunk index on Windows;
+/// 16 × 256 caps the padded attention buffers at 1/16 of that shape.
+const ORT_BATCH: usize = 16;
+const MAX_TOKENS: usize = 256;
+
 pub struct FastEmbedder {
     info: ModelInfo,
     // fastembed's embed takes &mut self; ORT parallelizes inside one call, so a mutex costs nothing.
@@ -48,7 +54,10 @@ impl FastEmbedder {
         let info = model_info(name);
         let opts = fastembed::TextInitOptions::new(info.model.clone())
             .with_cache_dir(cache_dir.to_path_buf())
-            .with_show_download_progress(false);
+            .with_show_download_progress(false)
+            // MiniLM/BGE are trained on ≤256 tokens and our chunks are ~128; 512 only inflates
+            // the padded attention buffers.
+            .with_max_length(MAX_TOKENS);
         let model = fastembed::TextEmbedding::try_new(opts)
             .map_err(|e| anyhow::anyhow!("loading {}: {e}", info.name))?;
         Ok(FastEmbedder {
@@ -67,7 +76,7 @@ impl Embedder for FastEmbedder {
     }
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         let mut m = self.model.lock().unwrap_or_else(|e| e.into_inner());
-        m.embed(texts, None)
+        m.embed(texts, Some(ORT_BATCH))
             .map_err(|e| anyhow::anyhow!("embedding failed: {e}"))
     }
 }
