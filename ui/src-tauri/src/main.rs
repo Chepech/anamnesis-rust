@@ -33,16 +33,28 @@ fn err(e: impl std::fmt::Display) -> String {
 
 /// Same location Electron used (`<config dir>/Anamnesis`), so existing installs keep their config.
 fn app_dir() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("Anamnesis")
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Anamnesis")
 }
 
 async fn engine(state: &State<'_, AppState>) -> Res<Arc<Engine>> {
-    state.engine.read().await.clone().ok_or_else(|| "Anamnesis core is still starting".to_string())
+    state
+        .engine
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| "Anamnesis core is still starting".to_string())
 }
 
 /// Blocking core calls (SQLite, ORT) off the async runtime.
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> anyhow::Result<T> + Send + 'static) -> Res<T> {
-    tauri::async_runtime::spawn_blocking(f).await.map_err(err)?.map_err(err)
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
+) -> Res<T> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(err)?
+        .map_err(err)
 }
 
 // ── Boot / restart ──────────────────────────────────────────────────────────
@@ -71,7 +83,8 @@ async fn boot(app: AppHandle) {
         let path = config_path.clone();
         let engine = blocking(move || Engine::open(&path, embedder)).await?;
         let handle = app.clone();
-        engine.on_status(move |p| emit_status(&handle, serde_json::to_value(p).unwrap_or_default()));
+        engine
+            .on_status(move |p| emit_status(&handle, serde_json::to_value(p).unwrap_or_default()));
         if engine.config().mcp_enabled {
             if let Err(e) = engine.start_mcp().await {
                 tracing::error!("MCP server failed to start: {e:#}");
@@ -106,18 +119,15 @@ async fn restart_engine(app: AppHandle) {
 // ── Commands (one per window.anamnesis method, see ui/src/bridge.ts) ───────
 
 #[tauri::command]
-fn get_config_path(state: State<'_, AppState>) -> String {
-    state.config_path.to_string_lossy().into_owned()
-}
-
-#[tauri::command]
 fn get_log_path(state: State<'_, AppState>) -> String {
     state.log_path.to_string_lossy().into_owned()
 }
 
 #[tauri::command]
 fn open_log_file(app: AppHandle, state: State<'_, AppState>) -> Res<()> {
-    app.opener().open_path(state.log_path.to_string_lossy(), None::<&str>).map_err(err)
+    app.opener()
+        .open_path(state.log_path.to_string_lossy(), None::<&str>)
+        .map_err(err)
 }
 
 #[tauri::command]
@@ -171,7 +181,11 @@ async fn get_dirs(state: State<'_, AppState>) -> Res<Vec<DirInfo>> {
         None => Ok(Config::load(&state.config_path)
             .watch_dirs
             .into_iter()
-            .map(|path| DirInfo { path, paused: false, chunk_count: 0 })
+            .map(|path| DirInfo {
+                path,
+                paused: false,
+                chunk_count: 0,
+            })
             .collect()),
     }
 }
@@ -212,7 +226,11 @@ async fn get_vectors(state: State<'_, AppState>) -> Res<Vec<VectorNode>> {
 }
 
 #[tauri::command]
-async fn search(state: State<'_, AppState>, query: String, limit: Option<usize>) -> Res<Vec<SearchHit>> {
+async fn search(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<usize>,
+) -> Res<Vec<SearchHit>> {
     let e = engine(&state).await?;
     blocking(move || e.search(&query, limit)).await
 }
@@ -235,7 +253,11 @@ async fn save_config(app: AppHandle, state: State<'_, AppState>, partial: Value)
             }
         }
         // Core not running (still booting or failed): persist so the next start picks it up.
-        None => Config::load(&state.config_path).merged(&partial).map_err(err)?.save(&state.config_path).map_err(err)?,
+        None => Config::load(&state.config_path)
+            .merged(&partial)
+            .map_err(err)?
+            .save(&state.config_path)
+            .map_err(err)?,
     }
     Ok(())
 }
@@ -261,12 +283,25 @@ fn open_panel(app: &AppHandle) {
 
 /// Mirrors the Electron tray menu. Fixes its swapped cancel actions: "Cancel" now cancels.
 fn build_menu(app: &AppHandle, payload: &Value) -> tauri::Result<Menu<tauri::Wry>> {
-    let state = payload["indexStatus"]["state"].as_str().unwrap_or(if payload["status"] == "error" { "error" } else { "idle" });
+    let state =
+        payload["indexStatus"]["state"]
+            .as_str()
+            .unwrap_or(if payload["status"] == "error" {
+                "error"
+            } else {
+                "idle"
+            });
     let item = |id: &str, text: &str| MenuItem::with_id(app, id, text, true, None::<&str>);
     let labels = std::cell::Cell::new(0);
     let label = |text: &str| {
         labels.set(labels.get() + 1);
-        MenuItem::with_id(app, format!("label-{}", labels.get()), text, false, None::<&str>)
+        MenuItem::with_id(
+            app,
+            format!("label-{}", labels.get()),
+            text,
+            false,
+            None::<&str>,
+        )
     };
     let sep = || PredefinedMenuItem::separator(app);
     let mut items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = vec![];
@@ -280,14 +315,23 @@ fn build_menu(app: &AppHandle, payload: &Value) -> tauri::Result<Menu<tauri::Wry
             items.push(Box::new(item("cancel", "Cancel indexing")?));
         }
         "error" => {
-            let msg = payload["indexStatus"]["message"].as_str().or(payload["error"].as_str()).unwrap_or("unknown");
-            items.push(Box::new(label(&format!("Error: {}", msg.chars().take(80).collect::<String>()))?));
+            let msg = payload["indexStatus"]["message"]
+                .as_str()
+                .or(payload["error"].as_str())
+                .unwrap_or("unknown");
+            items.push(Box::new(label(&format!(
+                "Error: {}",
+                msg.chars().take(80).collect::<String>()
+            ))?));
             items.push(Box::new(sep()?));
             items.push(Box::new(item("reindex", "Re-index vault")?));
         }
         "queued" => {
             let n = payload["indexStatus"]["count"].as_u64().unwrap_or(0);
-            items.push(Box::new(label(&format!("{n} file{} queued, indexing soon", if n == 1 { "" } else { "s" }))?));
+            items.push(Box::new(label(&format!(
+                "{n} file{} queued, indexing soon",
+                if n == 1 { "" } else { "s" }
+            ))?));
             items.push(Box::new(sep()?));
             items.push(Box::new(item("reindex", "Re-index vault now")?));
         }
@@ -299,7 +343,10 @@ fn build_menu(app: &AppHandle, payload: &Value) -> tauri::Result<Menu<tauri::Wry
     items.push(Box::new(sep()?));
     match payload["mcpStatus"].as_str() {
         Some("running") => {
-            items.push(Box::new(label(&format!("MCP: port {}", payload["mcpPort"]))?));
+            items.push(Box::new(label(&format!(
+                "MCP: port {}",
+                payload["mcpPort"]
+            ))?));
             items.push(Box::new(item("stop_mcp", "Stop MCP server")?));
         }
         Some(_) => items.push(Box::new(item("start_mcp", "Start MCP server")?)),
@@ -307,14 +354,19 @@ fn build_menu(app: &AppHandle, payload: &Value) -> tauri::Result<Menu<tauri::Wry
     }
     items.push(Box::new(sep()?));
     items.push(Box::new(item("quit", "Quit")?));
-    let refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = items.iter().map(|b| b.as_ref()).collect();
+    let refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
+        items.iter().map(|b| b.as_ref()).collect();
     Menu::with_items(app, &refs)
 }
 
 fn update_tray(app: &AppHandle, payload: &Value) {
     let key = format!(
         "{}|{}|{}|{}|{}",
-        payload["status"], payload["indexStatus"]["state"], payload["indexStatus"]["count"], payload["mcpStatus"], payload["mcpPort"]
+        payload["status"],
+        payload["indexStatus"]["state"],
+        payload["indexStatus"]["count"],
+        payload["mcpStatus"],
+        payload["mcpPort"]
     );
     {
         let state = app.state::<AppState>();
@@ -349,7 +401,9 @@ fn on_menu(app: &AppHandle, id: &str) {
             }
             return app.exit(0);
         }
-        let Some(e) = app.state::<AppState>().engine.read().await.clone() else { return };
+        let Some(e) = app.state::<AppState>().engine.read().await.clone() else {
+            return;
+        };
         match id.as_str() {
             "reindex" => e.reindex(),
             "pause" => e.pause(),
@@ -369,7 +423,11 @@ fn init_logging(log_path: &std::path::Path) -> Option<tracing_appender::non_bloc
     std::fs::create_dir_all(dir).ok()?;
     let file = tracing_appender::rolling::never(dir, log_path.file_name()?);
     let (writer, guard) = tracing_appender::non_blocking(file);
-    tracing_subscriber::fmt().with_writer(writer).with_ansi(false).with_env_filter("info").init();
+    tracing_subscriber::fmt()
+        .with_writer(writer)
+        .with_ansi(false)
+        .with_env_filter("info")
+        .init();
     Some(guard)
 }
 
@@ -388,12 +446,13 @@ fn main() {
     };
 
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| open_panel(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            open_panel(app)
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
-            get_config_path,
             get_log_path,
             open_log_file,
             open_file_folder,
@@ -426,7 +485,12 @@ fn main() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| on_menu(app, event.id().as_ref()))
                 .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
                         open_panel(tray.app_handle());
                     }
                 });
@@ -443,7 +507,10 @@ fn main() {
 
     app.run(|_app, event| {
         // Closing the panel must not quit: the tray keeps running. Explicit Quit passes a code.
-        if let RunEvent::ExitRequested { api, code: None, .. } = event {
+        if let RunEvent::ExitRequested {
+            api, code: None, ..
+        } = event
+        {
             api.prevent_exit();
         }
     });

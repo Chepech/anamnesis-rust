@@ -12,7 +12,7 @@ use crate::embed::Embedder;
 use crate::filter::Filter;
 use crate::parsers::{self, wikilinks};
 use crate::store::{stem_of, ChunkRow, FileRecord, Store, MAX_BACKLINKS};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashSet;
@@ -396,13 +396,15 @@ impl Indexer {
                         embed_hash: hash,
                     })
                     .collect();
-                self.store.replace_file(&FileRecord {
-                    path: key(&p.changed.path),
-                    mtime_ns: p.changed.mtime_ns,
-                    content_hash: p.changed.hash.clone(),
-                    tags,
-                    chunks: rows,
-                })?;
+                self.store
+                    .replace_file(&FileRecord {
+                        path: key(&p.changed.path),
+                        mtime_ns: p.changed.mtime_ns,
+                        content_hash: p.changed.hash.clone(),
+                        tags,
+                        chunks: rows,
+                    })
+                    .with_context(|| format!("writing {}", p.changed.path.display()))?;
             }
         }
         Ok(report)

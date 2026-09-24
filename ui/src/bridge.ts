@@ -8,7 +8,6 @@ import { open } from "@tauri-apps/plugin-dialog";
  */
 
 export interface AnamnesisApi {
-  getConfigPath(): Promise<string>;
   getStatus(): Promise<unknown>;
   restart(): Promise<void>;
   reindex(): Promise<void>;
@@ -47,7 +46,6 @@ export function detectPlatform(ua: string): string {
 
 export function createBridge(): AnamnesisApi {
   return {
-    getConfigPath: () => invoke("get_config_path"),
     getStatus: () => invoke("get_status"),
     restart: () => invoke("restart"),
     reindex: () => invoke("reindex"),

@@ -83,7 +83,7 @@ impl Filter {
     }
 
     /// The watch dir that owns `path` (longest match), if any.
-    pub fn root_of(&self, path: &Path) -> Option<PathBuf> {
+    fn root_of(&self, path: &Path) -> Option<PathBuf> {
         self.roots
             .iter()
             .filter(|r| path.starts_with(r))

@@ -15,7 +15,6 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(async () => "/picked/d
 beforeEach(() => vi.clearAllMocks());
 
 const cases: [string, unknown[], string, Record<string, unknown> | undefined][] = [
-  ["getConfigPath", [], "get_config_path", undefined],
   ["getStatus", [], "get_status", undefined],
   ["restart", [], "restart", undefined],
   ["reindex", [], "reindex", undefined],
