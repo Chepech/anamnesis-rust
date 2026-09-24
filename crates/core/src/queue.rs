@@ -103,7 +103,10 @@ mod tests {
         let mut q = PendingQueue::default();
         q.push(p("/a.md"), Op::Modify, t0, D);
         q.push(p("/b.md"), Op::Modify, t0 + D * 9 / 10, D);
-        assert!(q.take_due(t0 + D).is_none(), "second event extended the window");
+        assert!(
+            q.take_due(t0 + D).is_none(),
+            "second event extended the window"
+        );
         assert_eq!(q.take_due(t0 + D * 2).unwrap().modify.len(), 2);
     }
 

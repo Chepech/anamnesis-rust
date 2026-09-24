@@ -17,7 +17,8 @@ fn heading(line: &str) -> Option<(usize, &str)> {
     let level = line.bytes().take_while(|b| *b == b'#').count();
     let rest = &line[level..];
     let text = rest.trim();
-    ((1..=6).contains(&level) && rest.starts_with(char::is_whitespace) && !text.is_empty()).then_some((level, text))
+    ((1..=6).contains(&level) && rest.starts_with(char::is_whitespace) && !text.is_empty())
+        .then_some((level, text))
 }
 
 pub fn split_markdown(content: &str, chunk_size: usize, overlap: usize) -> Vec<Chunk> {
@@ -25,7 +26,13 @@ pub fn split_markdown(content: &str, chunk_size: usize, overlap: usize) -> Vec<C
     let mut current = String::new();
     let mut blocks: Vec<(String, String, String)> = vec![];
     let mut buffer: Vec<&str> = vec![];
-    let crumb = |stack: &[(usize, String)]| stack.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>().join(" > ");
+    let crumb = |stack: &[(usize, String)]| {
+        stack
+            .iter()
+            .map(|(_, t)| t.as_str())
+            .collect::<Vec<_>>()
+            .join(" > ")
+    };
 
     for line in content.split('\n') {
         if let Some((level, text)) = heading(line) {
@@ -51,9 +58,18 @@ pub fn split_markdown(content: &str, chunk_size: usize, overlap: usize) -> Vec<C
         if text.is_empty() {
             continue;
         }
-        let parts = if len(text) <= chunk_size { vec![text.to_string()] } else { recursive_split(text, &["\n\n", "\n", ". ", " "], chunk_size, overlap) };
+        let parts = if len(text) <= chunk_size {
+            vec![text.to_string()]
+        } else {
+            recursive_split(text, &["\n\n", "\n", ". ", " "], chunk_size, overlap)
+        };
         for sub in parts {
-            chunks.push(Chunk { text: sub, heading: heading.clone(), context_path: context_path.clone(), chunk_index: chunks.len() });
+            chunks.push(Chunk {
+                text: sub,
+                heading: heading.clone(),
+                context_path: context_path.clone(),
+                chunk_index: chunks.len(),
+            });
         }
     }
     chunks
@@ -66,12 +82,19 @@ fn recursive_split(text: &str, seps: &[&str], size: usize, overlap: usize) -> Ve
     let Some((sep, rest)) = seps.split_first() else {
         let chars: Vec<char> = text.chars().collect();
         let step = size.saturating_sub(overlap).max(1);
-        return (0..chars.len()).step_by(step).map(|i| chars[i..(i + size).min(chars.len())].iter().collect()).collect();
+        return (0..chars.len())
+            .step_by(step)
+            .map(|i| chars[i..(i + size).min(chars.len())].iter().collect())
+            .collect();
     };
     let mut out = vec![];
     let mut current = String::new();
     for part in text.split(sep) {
-        let candidate = if current.is_empty() { part.to_string() } else { format!("{current}{sep}{part}") };
+        let candidate = if current.is_empty() {
+            part.to_string()
+        } else {
+            format!("{current}{sep}{part}")
+        };
         if len(&candidate) <= size {
             current = candidate;
         } else {
@@ -104,9 +127,18 @@ mod tests {
     fn content_before_first_heading_has_empty_breadcrumb() {
         let c = split_markdown("intro line\n# Title\nbody", 512, 64);
         assert_eq!(c[0].text, "intro line");
-        assert_eq!((c[0].heading.as_str(), c[0].context_path.as_str()), ("", ""));
-        assert_eq!(c[1].text, "# Title\nbody", "heading line stays in its block");
-        assert_eq!((c[1].heading.as_str(), c[1].context_path.as_str()), ("Title", "Title"));
+        assert_eq!(
+            (c[0].heading.as_str(), c[0].context_path.as_str()),
+            ("", "")
+        );
+        assert_eq!(
+            c[1].text, "# Title\nbody",
+            "heading line stays in its block"
+        );
+        assert_eq!(
+            (c[1].heading.as_str(), c[1].context_path.as_str()),
+            ("Title", "Title")
+        );
     }
 
     #[test]
@@ -122,7 +154,10 @@ mod tests {
     fn chunk_indexes_are_sequential_and_empty_blocks_skipped() {
         let c = split_markdown("# A\n\n\n# B\ntext\n# C\n   ", 512, 64);
         assert_eq!(texts(&c), vec!["# A", "# B\ntext", "# C"]);
-        assert_eq!(c.iter().map(|c| c.chunk_index).collect::<Vec<_>>(), vec![0, 1, 2]);
+        assert_eq!(
+            c.iter().map(|c| c.chunk_index).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
         assert!(split_markdown("", 512, 64).is_empty());
         assert!(split_markdown(" \n\n ", 512, 64).is_empty());
     }
@@ -141,14 +176,20 @@ mod tests {
         let c = split_markdown(&md, 120, 10);
         assert!(c.len() >= 3);
         assert!(c.iter().all(|c| c.text.chars().count() <= 120));
-        assert!(c.iter().all(|c| c.heading == "H"), "sub-chunks keep the block breadcrumb");
+        assert!(
+            c.iter().all(|c| c.heading == "H"),
+            "sub-chunks keep the block breadcrumb"
+        );
     }
 
     #[test]
     fn unbroken_text_falls_back_to_hard_split_with_overlap() {
         let s = "x".repeat(250);
         let c = split_markdown(&s, 100, 20);
-        assert_eq!(c.iter().map(|c| c.text.chars().count()).collect::<Vec<_>>(), vec![100, 100, 90, 10]);
+        assert_eq!(
+            c.iter().map(|c| c.text.chars().count()).collect::<Vec<_>>(),
+            vec![100, 100, 90, 10]
+        );
     }
 
     #[test]
@@ -164,6 +205,10 @@ mod tests {
         let sent = "This is one sentence that is fairly long";
         let md = format!("{sent}. {sent}. {sent}.");
         let c = split_markdown(&md, 90, 0);
-        assert!(c[0].text.ends_with("long"), "split at '. ' boundary: {:?}", c[0].text);
+        assert!(
+            c[0].text.ends_with("long"),
+            "split at '. ' boundary: {:?}",
+            c[0].text
+        );
     }
 }

@@ -1,8 +1,10 @@
 pub mod chunker;
 pub mod config;
 pub mod embed;
+pub mod engine;
 pub mod filter;
 pub mod indexer;
+pub mod mcp;
 pub mod parsers;
 pub mod queue;
 pub mod search;

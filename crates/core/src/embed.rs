@@ -26,7 +26,11 @@ pub fn model_info(name: &str) -> ModelInfo {
         "BAAI/bge-small-en-v1.5" => ("BAAI/bge-small-en-v1.5", 384, M::BGESmallENV15),
         "BAAI/bge-base-en-v1.5" => ("BAAI/bge-base-en-v1.5", 768, M::BGEBaseENV15),
         "Xenova/all-mpnet-base-v2" => ("Xenova/all-mpnet-base-v2", 768, M::AllMpnetBaseV2),
-        "sentence-transformers/all-MiniLM-L6-v2" => ("sentence-transformers/all-MiniLM-L6-v2", 384, M::AllMiniLML6V2),
+        "sentence-transformers/all-MiniLM-L6-v2" => (
+            "sentence-transformers/all-MiniLM-L6-v2",
+            384,
+            M::AllMiniLML6V2,
+        ),
         _ => (DEFAULT_MODEL, 384, M::AllMiniLML6V2),
     };
     ModelInfo { name, dim, model }
@@ -42,9 +46,15 @@ impl FastEmbedder {
     /// Loads (downloading on first use into `cache_dir`) the ONNX model.
     pub fn new(name: &str, cache_dir: &Path) -> Result<FastEmbedder> {
         let info = model_info(name);
-        let opts = fastembed::TextInitOptions::new(info.model.clone()).with_cache_dir(cache_dir.to_path_buf()).with_show_download_progress(false);
-        let model = fastembed::TextEmbedding::try_new(opts).map_err(|e| anyhow::anyhow!("loading {}: {e}", info.name))?;
-        Ok(FastEmbedder { info, model: std::sync::Mutex::new(model) })
+        let opts = fastembed::TextInitOptions::new(info.model.clone())
+            .with_cache_dir(cache_dir.to_path_buf())
+            .with_show_download_progress(false);
+        let model = fastembed::TextEmbedding::try_new(opts)
+            .map_err(|e| anyhow::anyhow!("loading {}: {e}", info.name))?;
+        Ok(FastEmbedder {
+            info,
+            model: std::sync::Mutex::new(model),
+        })
     }
 }
 
@@ -57,7 +67,8 @@ impl Embedder for FastEmbedder {
     }
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         let mut m = self.model.lock().unwrap_or_else(|e| e.into_inner());
-        m.embed(texts, None).map_err(|e| anyhow::anyhow!("embedding failed: {e}"))
+        m.embed(texts, None)
+            .map_err(|e| anyhow::anyhow!("embedding failed: {e}"))
     }
 }
 
@@ -84,8 +95,13 @@ impl Embedder for HashEmbedder {
             .map(|t| {
                 let mut v = vec![0f32; self.dim];
                 v[0] = 1e-3; // keeps empty text a valid (non-zero) vector
-                for w in t.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()) {
-                    v[(blake3::hash(w.as_bytes()).as_bytes()[0] as usize * 131 + w.len()) % self.dim] += 1.0;
+                for w in t
+                    .to_lowercase()
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|w| !w.is_empty())
+                {
+                    v[(blake3::hash(w.as_bytes()).as_bytes()[0] as usize * 131 + w.len())
+                        % self.dim] += 1.0;
                 }
                 let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
                 v.iter().map(|x| x / n).collect()
@@ -105,27 +121,48 @@ mod tests {
     #[test]
     fn model_info_maps_ts_names() {
         assert_eq!(model_info("Xenova/all-MiniLM-L6-v2").dim, 384);
-        assert_eq!(model_info("BAAI/bge-small-en-v1.5").model, fastembed::EmbeddingModel::BGESmallENV15);
+        assert_eq!(
+            model_info("BAAI/bge-small-en-v1.5").model,
+            fastembed::EmbeddingModel::BGESmallENV15
+        );
         assert_eq!(model_info("BAAI/bge-base-en-v1.5").dim, 768);
-        assert_eq!(model_info("sentence-transformers/all-MiniLM-L6-v2").model, fastembed::EmbeddingModel::AllMiniLML6V2);
+        assert_eq!(
+            model_info("sentence-transformers/all-MiniLM-L6-v2").model,
+            fastembed::EmbeddingModel::AllMiniLML6V2
+        );
         assert_eq!(model_info("nope/unknown").name, DEFAULT_MODEL);
     }
 
     #[test]
     fn hash_embedder_is_deterministic_normalized_and_sized() {
         let e = HashEmbedder::new(64);
-        let v = e.embed(&["forge anvil hammer".into(), "forge anvil hammer".into(), String::new()]).unwrap();
+        let v = e
+            .embed(&[
+                "forge anvil hammer".into(),
+                "forge anvil hammer".into(),
+                String::new(),
+            ])
+            .unwrap();
         assert_eq!(v.len(), 3);
         assert_eq!(v[0], v[1]);
         assert!(v.iter().all(|x| x.len() == 64));
         assert!((cos(&v[0], &v[0]) - 1.0).abs() < 1e-5);
-        assert!((cos(&v[2], &v[2]) - 1.0).abs() < 1e-5, "empty text still gets a unit vector");
+        assert!(
+            (cos(&v[2], &v[2]) - 1.0).abs() < 1e-5,
+            "empty text still gets a unit vector"
+        );
     }
 
     #[test]
     fn hash_embedder_places_shared_words_closer() {
         let e = HashEmbedder::new(256);
-        let v = e.embed(&["rust borrow checker".into(), "the rust checker".into(), "tomato garden soil".into()]).unwrap();
+        let v = e
+            .embed(&[
+                "rust borrow checker".into(),
+                "the rust checker".into(),
+                "tomato garden soil".into(),
+            ])
+            .unwrap();
         assert!(cos(&v[0], &v[1]) > cos(&v[0], &v[2]));
     }
 
@@ -134,7 +171,9 @@ mod tests {
     fn fastembed_minilm_produces_384d_unit_vectors() {
         let dir = tempfile::tempdir().unwrap();
         let e = FastEmbedder::new(DEFAULT_MODEL, dir.path()).unwrap();
-        let v = e.embed(&["hello world".into(), "hola mundo".into()]).unwrap();
+        let v = e
+            .embed(&["hello world".into(), "hola mundo".into()])
+            .unwrap();
         assert_eq!((e.dim(), v.len(), v[0].len()), (384, 2, 384));
         assert!((cos(&v[0], &v[0]) - 1.0).abs() < 1e-3);
     }

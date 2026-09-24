@@ -108,6 +108,7 @@ dependencies = [
  "quick-xml",
  "rayon",
  "regex",
+ "reqwest 0.13.5",
  "rmcp",
  "rusqlite",
  "schemars 1.2.2",

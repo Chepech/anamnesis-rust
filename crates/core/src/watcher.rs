@@ -40,7 +40,9 @@ impl Watcher {
         let inner = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             let Ok(ev) = res else { return };
             let structural = match ev.kind {
-                EventKind::Access(_) | EventKind::Modify(ModifyKind::Metadata(_)) | EventKind::Other => return,
+                EventKind::Access(_)
+                | EventKind::Modify(ModifyKind::Metadata(_))
+                | EventKind::Other => return,
                 EventKind::Create(_) | EventKind::Modify(ModifyKind::Name(_)) => true,
                 _ => false,
             };
@@ -51,50 +53,59 @@ impl Watcher {
                 }
             }
         })?;
-        let w = Watcher { inner: Mutex::new(inner), tx, paused };
+        let w = Watcher {
+            inner: Mutex::new(inner),
+            tx,
+            paused,
+        };
         for d in dirs {
             w.watch_dir(d)?;
         }
-        std::thread::Builder::new().name("anamnesis-watch-queue".into()).spawn(move || {
-            let (mut q, mut debounce) = (PendingQueue::default(), debounce);
-            loop {
-                let msg = match q.deadline() {
-                    Some(d) => rx.recv_timeout(d.saturating_duration_since(Instant::now())),
-                    None => rx.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected),
-                };
-                match msg {
-                    Ok(Cmd::Event(p, structural)) => {
-                        // Existing path = modify, missing = delete. Directories only count when they
-                        // appear (create/rename-in); their own metadata churn would re-walk them.
-                        let op = match std::fs::metadata(&p) {
-                            Ok(m) if m.is_dir() && !structural => continue,
-                            Ok(_) => Op::Modify,
-                            Err(_) => Op::Delete,
-                        };
-                        q.push(p, op, Instant::now(), debounce);
-                        on_queued(q.len(), debounce);
-                    }
-                    Ok(Cmd::Flush) => {
-                        let b = q.take_all();
-                        if !b.is_empty() {
-                            on_batch(b);
+        std::thread::Builder::new()
+            .name("anamnesis-watch-queue".into())
+            .spawn(move || {
+                let (mut q, mut debounce) = (PendingQueue::default(), debounce);
+                loop {
+                    let msg = match q.deadline() {
+                        Some(d) => rx.recv_timeout(d.saturating_duration_since(Instant::now())),
+                        None => rx.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+                    };
+                    match msg {
+                        Ok(Cmd::Event(p, structural)) => {
+                            // Existing path = modify, missing = delete. Directories only count when they
+                            // appear (create/rename-in); their own metadata churn would re-walk them.
+                            let op = match std::fs::metadata(&p) {
+                                Ok(m) if m.is_dir() && !structural => continue,
+                                Ok(_) => Op::Modify,
+                                Err(_) => Op::Delete,
+                            };
+                            q.push(p, op, Instant::now(), debounce);
+                            on_queued(q.len(), debounce);
                         }
-                    }
-                    Ok(Cmd::Debounce(d)) => debounce = d,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        if let Some(b) = q.take_due(Instant::now()) {
-                            on_batch(b);
+                        Ok(Cmd::Flush) => {
+                            let b = q.take_all();
+                            if !b.is_empty() {
+                                on_batch(b);
+                            }
                         }
+                        Ok(Cmd::Debounce(d)) => debounce = d,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            if let Some(b) = q.take_due(Instant::now()) {
+                                on_batch(b);
+                            }
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
-            }
-        })?;
+            })?;
         Ok(w)
     }
 
     pub fn watch_dir(&self, dir: &Path) -> Result<()> {
-        self.inner.lock().unwrap().watch(dir, RecursiveMode::Recursive)?;
+        self.inner
+            .lock()
+            .unwrap()
+            .watch(dir, RecursiveMode::Recursive)?;
         Ok(())
     }
 
@@ -163,7 +174,10 @@ mod tests {
         std::fs::write(&p, "x").unwrap();
         let b = t.rx.recv_timeout(WAIT).unwrap();
         assert_eq!(b.modify, vec![p]);
-        assert!(t.queued.try_recv().unwrap() >= 1, "queued count reported before the flush");
+        assert!(
+            t.queued.try_recv().unwrap() >= 1,
+            "queued count reported before the flush"
+        );
     }
 
     #[test]
@@ -187,7 +201,10 @@ mod tests {
         }
         let b = t.rx.recv_timeout(WAIT).unwrap();
         assert_eq!(b.modify, vec![p]);
-        assert!(t.rx.recv_timeout(Duration::from_millis(600)).is_err(), "no second batch");
+        assert!(
+            t.rx.recv_timeout(Duration::from_millis(600)).is_err(),
+            "no second batch"
+        );
     }
 
     #[test]
@@ -217,7 +234,10 @@ mod tests {
         std::fs::write(&p, "x").unwrap();
         t.queued.recv_timeout(WAIT).unwrap();
         t.w.flush_now();
-        assert_eq!(t.rx.recv_timeout(Duration::from_secs(2)).unwrap().modify, vec![p]);
+        assert_eq!(
+            t.rx.recv_timeout(Duration::from_secs(2)).unwrap().modify,
+            vec![p]
+        );
     }
 
     #[test]

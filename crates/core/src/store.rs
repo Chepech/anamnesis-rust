@@ -85,11 +85,24 @@ impl Store {
 
     /// sqlite-vec is registered as an auto extension, so it must happen before the connection opens.
     fn init(conn: Connection, model: &str, dim: usize) -> Result<(Store, bool)> {
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL;")?;
-        conn.execute_batch("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);")?;
-        let want = [("schema_version", SCHEMA_VERSION.to_string()), ("model", model.to_string()), ("dim", dim.to_string())];
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL;",
+        )?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+        )?;
+        let want = [
+            ("schema_version", SCHEMA_VERSION.to_string()),
+            ("model", model.to_string()),
+            ("dim", dim.to_string()),
+        ];
         let matches = want.iter().all(|(k, v)| {
-            conn.query_row("SELECT value FROM meta WHERE key = ?1", [k], |r| r.get::<_, String>(0)).ok().as_deref() == Some(v.as_str())
+            conn.query_row("SELECT value FROM meta WHERE key = ?1", [k], |r| {
+                r.get::<_, String>(0)
+            })
+            .ok()
+            .as_deref()
+                == Some(v.as_str())
         });
         if !matches {
             conn.execute_batch(
@@ -137,9 +150,18 @@ impl Store {
             END;"
         ))?;
         for (k, v) in &want {
-            conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?1, ?2)", [k, v.as_str()])?;
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES (?1, ?2)",
+                [k, v.as_str()],
+            )?;
         }
-        Ok((Store { conn: Mutex::new(conn), dim }, !matches))
+        Ok((
+            Store {
+                conn: Mutex::new(conn),
+                dim,
+            },
+            !matches,
+        ))
     }
 
     fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
@@ -161,7 +183,10 @@ impl Store {
 
     /// Records a new mtime for a file whose content hash did not change.
     pub fn touch_file(&self, path: &str, mtime_ns: i64) -> Result<()> {
-        self.conn().execute("UPDATE files SET mtime_ns = ?2 WHERE path = ?1", params![path, mtime_ns])?;
+        self.conn().execute(
+            "UPDATE files SET mtime_ns = ?2 WHERE path = ?1",
+            params![path, mtime_ns],
+        )?;
         Ok(())
     }
 
@@ -172,7 +197,10 @@ impl Store {
         let id = ensure_file(&tx, path)?;
         tx.execute("DELETE FROM links WHERE source_id = ?1", [id])?;
         for t in targets {
-            tx.execute("INSERT OR IGNORE INTO links(source_id, target) VALUES (?1, ?2)", params![id, t])?;
+            tx.execute(
+                "INSERT OR IGNORE INTO links(source_id, target) VALUES (?1, ?2)",
+                params![id, t],
+            )?;
         }
         tx.commit()?;
         Ok(())
@@ -207,7 +235,13 @@ impl Store {
     /// Atomically replaces every chunk of a file (FTS and vectors follow via triggers).
     pub fn replace_file(&self, rec: &FileRecord) -> Result<()> {
         if let Some(c) = rec.chunks.iter().find(|c| c.vector.len() != self.dim) {
-            anyhow::bail!("chunk {} of {} has dim {}, store expects {}", c.chunk_index, rec.path, c.vector.len(), self.dim);
+            anyhow::bail!(
+                "chunk {} of {} has dim {}, store expects {}",
+                c.chunk_index,
+                rec.path,
+                c.vector.len(),
+                self.dim
+            );
         }
         let mut conn = self.conn();
         let tx = conn.transaction()?;
@@ -223,7 +257,14 @@ impl Store {
             )?;
             let mut vec = tx.prepare("INSERT INTO chunks_vec(rowid, embedding) VALUES (?1, ?2)")?;
             for c in &rec.chunks {
-                ins.execute(params![id, c.chunk_index as i64, c.heading, c.context_path, c.text, c.embed_hash])?;
+                ins.execute(params![
+                    id,
+                    c.chunk_index as i64,
+                    c.heading,
+                    c.context_path,
+                    c.text,
+                    c.embed_hash
+                ])?;
                 vec.execute(params![tx.last_insert_rowid(), to_blob(&c.vector)])?;
             }
         }
@@ -249,13 +290,17 @@ impl Store {
 
     pub fn indexed_paths(&self) -> Result<Vec<String>> {
         let conn = self.conn();
-        let mut st = conn.prepare("SELECT path FROM files WHERE content_hash IS NOT NULL ORDER BY path")?;
+        let mut st =
+            conn.prepare("SELECT path FROM files WHERE content_hash IS NOT NULL ORDER BY path")?;
         let rows = st.query_map([], |r| r.get(0))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     pub fn chunk_count(&self) -> Result<usize> {
-        Ok(self.conn().query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get::<_, i64>(0))? as usize)
+        Ok(self
+            .conn()
+            .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get::<_, i64>(0))?
+            as usize)
     }
 
     /// (path, chunk count) sorted by count descending, then path.
@@ -275,7 +320,9 @@ impl Store {
         }
         let conn = self.conn();
         let mut st = conn.prepare("SELECT rowid, distance FROM chunks_vec WHERE embedding MATCH ?1 AND k = ?2 ORDER BY distance")?;
-        let rows = st.query_map(params![to_blob(query), k as i64], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        let rows = st.query_map(params![to_blob(query), k as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
@@ -339,7 +386,10 @@ impl Store {
 }
 
 fn ensure_file(tx: &rusqlite::Transaction, path: &str) -> rusqlite::Result<i64> {
-    tx.execute("INSERT OR IGNORE INTO files(path, stem) VALUES (?1, ?2)", params![path, stem_of(path)])?;
+    tx.execute(
+        "INSERT OR IGNORE INTO files(path, stem) VALUES (?1, ?2)",
+        params![path, stem_of(path)],
+    )?;
     tx.query_row("SELECT id FROM files WHERE path = ?1", [path], |r| r.get(0))
 }
 
@@ -347,7 +397,9 @@ fn register_sqlite_vec() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| unsafe {
         #[allow(clippy::missing_transmute_annotations)]
-        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(sqlite_vec::sqlite3_vec_init as *const ())));
+        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+            sqlite_vec::sqlite3_vec_init as *const (),
+        )));
     });
 }
 
@@ -356,11 +408,16 @@ fn to_blob(v: &[f32]) -> Vec<u8> {
 }
 
 fn from_blob(b: &[u8]) -> Vec<f32> {
-    b.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+    b.chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
 }
 
 pub fn stem_of(path: &str) -> String {
-    Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
+    Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -385,7 +442,13 @@ mod tests {
     }
 
     fn file(path: &str, chunks: Vec<ChunkRow>) -> FileRecord {
-        FileRecord { path: path.into(), mtime_ns: 100_000_000, content_hash: "c1".into(), tags: "a, b".into(), chunks }
+        FileRecord {
+            path: path.into(),
+            mtime_ns: 100_000_000,
+            content_hash: "c1".into(),
+            tags: "a, b".into(),
+            chunks,
+        }
     }
 
     #[test]
@@ -405,7 +468,8 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("a.db");
         let (s, _) = Store::open(&p, "m1", DIM).unwrap();
-        s.replace_file(&file("/v/a.md", vec![chunk(0, "x", [1.0, 0.0, 0.0, 0.0])])).unwrap();
+        s.replace_file(&file("/v/a.md", vec![chunk(0, "x", [1.0, 0.0, 0.0, 0.0])]))
+            .unwrap();
         drop(s);
         let (s, reset) = Store::open(&p, "m2", DIM).unwrap();
         assert!(reset, "same dim, different model: vectors are incompatible");
@@ -419,9 +483,22 @@ mod tests {
     #[test]
     fn replace_file_stores_chunks_and_state() {
         let s = store();
-        s.replace_file(&file("/v/a.md", vec![chunk(0, "alpha", [1.0, 0.0, 0.0, 0.0]), chunk(1, "beta", [0.0, 1.0, 0.0, 0.0])])).unwrap();
+        s.replace_file(&file(
+            "/v/a.md",
+            vec![
+                chunk(0, "alpha", [1.0, 0.0, 0.0, 0.0]),
+                chunk(1, "beta", [0.0, 1.0, 0.0, 0.0]),
+            ],
+        ))
+        .unwrap();
         assert_eq!(s.chunk_count().unwrap(), 2);
-        assert_eq!(s.file_state("/v/a.md").unwrap(), Some(FileState { mtime_ns: 100_000_000, content_hash: "c1".into() }));
+        assert_eq!(
+            s.file_state("/v/a.md").unwrap(),
+            Some(FileState {
+                mtime_ns: 100_000_000,
+                content_hash: "c1".into()
+            })
+        );
         assert_eq!(s.file_state("/v/missing.md").unwrap(), None);
         assert_eq!(s.indexed_paths().unwrap(), vec!["/v/a.md"]);
     }
@@ -429,17 +506,44 @@ mod tests {
     #[test]
     fn replace_file_twice_leaves_only_the_new_chunks_everywhere() {
         let s = store();
-        s.replace_file(&file("/v/a.md", vec![chunk(0, "alpha", [1.0, 0.0, 0.0, 0.0]), chunk(1, "beta", [0.0, 1.0, 0.0, 0.0])])).unwrap();
-        s.replace_file(&file("/v/a.md", vec![chunk(0, "gamma", [0.0, 0.0, 1.0, 0.0])])).unwrap();
+        s.replace_file(&file(
+            "/v/a.md",
+            vec![
+                chunk(0, "alpha", [1.0, 0.0, 0.0, 0.0]),
+                chunk(1, "beta", [0.0, 1.0, 0.0, 0.0]),
+            ],
+        ))
+        .unwrap();
+        s.replace_file(&file(
+            "/v/a.md",
+            vec![chunk(0, "gamma", [0.0, 0.0, 1.0, 0.0])],
+        ))
+        .unwrap();
         assert_eq!(s.chunk_count().unwrap(), 1);
-        assert!(s.fts("\"alpha\"", 10).unwrap().is_empty(), "FTS rows follow chunk deletes");
-        assert_eq!(s.knn(&[1.0, 0.0, 0.0, 0.0], 10).unwrap().len(), 1, "vector rows follow chunk deletes");
+        assert!(
+            s.fts("\"alpha\"", 10).unwrap().is_empty(),
+            "FTS rows follow chunk deletes"
+        );
+        assert_eq!(
+            s.knn(&[1.0, 0.0, 0.0, 0.0], 10).unwrap().len(),
+            1,
+            "vector rows follow chunk deletes"
+        );
     }
 
     #[test]
     fn replace_file_rejects_wrong_dimension_without_partial_write() {
         let s = store();
-        let bad = file("/v/a.md", vec![chunk(0, "ok", [1.0, 0.0, 0.0, 0.0]), ChunkRow { vector: vec![1.0; 3], ..chunk(1, "bad", [0.0; DIM]) }]);
+        let bad = file(
+            "/v/a.md",
+            vec![
+                chunk(0, "ok", [1.0, 0.0, 0.0, 0.0]),
+                ChunkRow {
+                    vector: vec![1.0; 3],
+                    ..chunk(1, "bad", [0.0; DIM])
+                },
+            ],
+        );
         assert!(s.replace_file(&bad).is_err());
         assert_eq!(s.chunk_count().unwrap(), 0, "transaction rolled back");
     }
@@ -447,9 +551,16 @@ mod tests {
     #[test]
     fn touch_file_updates_mtime_only() {
         let s = store();
-        s.replace_file(&file("/v/a.md", vec![chunk(0, "x", [1.0, 0.0, 0.0, 0.0])])).unwrap();
+        s.replace_file(&file("/v/a.md", vec![chunk(0, "x", [1.0, 0.0, 0.0, 0.0])]))
+            .unwrap();
         s.touch_file("/v/a.md", 999).unwrap();
-        assert_eq!(s.file_state("/v/a.md").unwrap().unwrap(), FileState { mtime_ns: 999, content_hash: "c1".into() });
+        assert_eq!(
+            s.file_state("/v/a.md").unwrap().unwrap(),
+            FileState {
+                mtime_ns: 999,
+                content_hash: "c1".into()
+            }
+        );
         assert_eq!(s.chunk_count().unwrap(), 1);
     }
 
@@ -457,10 +568,15 @@ mod tests {
     fn delete_path_removes_single_file_or_whole_directory() {
         let s = store();
         for p in ["/v/a.md", "/v/sub/b.md", "/v/sub/c.md", "/v/subway.md"] {
-            s.replace_file(&file(p, vec![chunk(0, p, [1.0, 0.0, 0.0, 0.0])])).unwrap();
+            s.replace_file(&file(p, vec![chunk(0, p, [1.0, 0.0, 0.0, 0.0])]))
+                .unwrap();
         }
         assert_eq!(s.delete_path("/v/a.md").unwrap(), 1);
-        assert_eq!(s.delete_path("/v/sub").unwrap(), 2, "directory prefix, not string prefix");
+        assert_eq!(
+            s.delete_path("/v/sub").unwrap(),
+            2,
+            "directory prefix, not string prefix"
+        );
         assert_eq!(s.indexed_paths().unwrap(), vec!["/v/subway.md"]);
         assert_eq!(s.chunk_count().unwrap(), 1);
         assert_eq!(s.knn(&[1.0, 0.0, 0.0, 0.0], 10).unwrap().len(), 1);
@@ -469,7 +585,11 @@ mod tests {
     #[test]
     fn delete_path_handles_windows_separators() {
         let s = store();
-        s.replace_file(&file(r"C:\v\sub\b.md", vec![chunk(0, "b", [1.0, 0.0, 0.0, 0.0])])).unwrap();
+        s.replace_file(&file(
+            r"C:\v\sub\b.md",
+            vec![chunk(0, "b", [1.0, 0.0, 0.0, 0.0])],
+        ))
+        .unwrap();
         assert_eq!(s.delete_path(r"C:\v\sub").unwrap(), 1);
     }
 
@@ -477,14 +597,16 @@ mod tests {
     fn paths_with_quotes_are_safe() {
         let s = store();
         let p = r#"/v/it's "quoted".md"#;
-        s.replace_file(&file(p, vec![chunk(0, "q", [1.0, 0.0, 0.0, 0.0])])).unwrap();
+        s.replace_file(&file(p, vec![chunk(0, "q", [1.0, 0.0, 0.0, 0.0])]))
+            .unwrap();
         assert_eq!(s.delete_path(p).unwrap(), 1);
     }
 
     #[test]
     fn clear_empties_everything() {
         let s = store();
-        s.replace_file(&file("/v/a.md", vec![chunk(0, "x", [1.0, 0.0, 0.0, 0.0])])).unwrap();
+        s.replace_file(&file("/v/a.md", vec![chunk(0, "x", [1.0, 0.0, 0.0, 0.0])]))
+            .unwrap();
         s.set_links("/v/a.md", &["b".into()]).unwrap();
         s.clear().unwrap();
         assert_eq!(s.chunk_count().unwrap(), 0);
@@ -495,33 +617,63 @@ mod tests {
     #[test]
     fn knn_orders_by_cosine_distance() {
         let s = store();
-        s.replace_file(&file("/v/a.md", vec![chunk(0, "east", [1.0, 0.0, 0.0, 0.0]), chunk(1, "north", [0.0, 1.0, 0.0, 0.0]), chunk(2, "northeast", [0.7, 0.7, 0.0, 0.0])])).unwrap();
+        s.replace_file(&file(
+            "/v/a.md",
+            vec![
+                chunk(0, "east", [1.0, 0.0, 0.0, 0.0]),
+                chunk(1, "north", [0.0, 1.0, 0.0, 0.0]),
+                chunk(2, "northeast", [0.7, 0.7, 0.0, 0.0]),
+            ],
+        ))
+        .unwrap();
         let hits = s.knn(&[0.0, 2.0, 0.0, 0.0], 3).unwrap();
-        let texts: Vec<String> = hits.iter().map(|(id, _)| s.hits(&[*id]).unwrap()[id].text.clone()).collect();
+        let texts: Vec<String> = hits
+            .iter()
+            .map(|(id, _)| s.hits(&[*id]).unwrap()[id].text.clone())
+            .collect();
         assert_eq!(texts, vec!["north", "northeast", "east"]);
-        assert!(hits[0].1 < 1e-5, "identical direction ≈ zero distance regardless of magnitude");
+        assert!(
+            hits[0].1 < 1e-5,
+            "identical direction ≈ zero distance regardless of magnitude"
+        );
         assert!(hits.windows(2).all(|w| w[0].1 <= w[1].1));
-        assert_eq!(s.knn(&[1.0, 0.0, 0.0, 0.0], 1).unwrap().len(), 1, "k limits results");
+        assert_eq!(
+            s.knn(&[1.0, 0.0, 0.0, 0.0], 1).unwrap().len(),
+            1,
+            "k limits results"
+        );
     }
 
     #[test]
     fn fts_ranks_matching_chunks_with_bm25() {
         let s = store();
-        s.replace_file(&file("/v/a.md", vec![
-            chunk(0, "rust rust rust ownership", [1.0, 0.0, 0.0, 0.0]),
-            chunk(1, "a note about rust", [0.0, 1.0, 0.0, 0.0]),
-            chunk(2, "nothing relevant", [0.0, 0.0, 1.0, 0.0]),
-        ])).unwrap();
+        s.replace_file(&file(
+            "/v/a.md",
+            vec![
+                chunk(0, "rust rust rust ownership", [1.0, 0.0, 0.0, 0.0]),
+                chunk(1, "a note about rust", [0.0, 1.0, 0.0, 0.0]),
+                chunk(2, "nothing relevant", [0.0, 0.0, 1.0, 0.0]),
+            ],
+        ))
+        .unwrap();
         let ids = s.fts("\"rust\"", 10).unwrap();
         assert_eq!(ids.len(), 2);
-        assert_eq!(s.hits(&ids[..1]).unwrap()[&ids[0]].chunk_index, 0, "denser match ranks first");
+        assert_eq!(
+            s.hits(&ids[..1]).unwrap()[&ids[0]].chunk_index,
+            0,
+            "denser match ranks first"
+        );
         assert!(s.fts("\"absent\"", 10).unwrap().is_empty());
     }
 
     #[test]
     fn fts_is_accent_and_case_insensitive() {
         let s = store();
-        s.replace_file(&file("/v/a.md", vec![chunk(0, "Reflexión sobre el Área", [1.0, 0.0, 0.0, 0.0])])).unwrap();
+        s.replace_file(&file(
+            "/v/a.md",
+            vec![chunk(0, "Reflexión sobre el Área", [1.0, 0.0, 0.0, 0.0])],
+        ))
+        .unwrap();
         assert_eq!(s.fts("\"reflexion\"", 10).unwrap().len(), 1);
         assert_eq!(s.fts("\"AREA\"", 10).unwrap().len(), 1);
     }
@@ -529,25 +681,45 @@ mod tests {
     #[test]
     fn hits_return_chunk_fields_and_importance() {
         let s = store();
-        s.replace_file(&file("/v/Target.md", vec![chunk(0, "t", [1.0, 0.0, 0.0, 0.0])])).unwrap();
+        s.replace_file(&file(
+            "/v/Target.md",
+            vec![chunk(0, "t", [1.0, 0.0, 0.0, 0.0])],
+        ))
+        .unwrap();
         s.set_links("/v/x.md", &["Target".into()]).unwrap();
         s.set_links("/v/y.md", &["target".into()]).unwrap();
         let id = s.knn(&[1.0, 0.0, 0.0, 0.0], 1).unwrap()[0].0;
         let h = &s.hits(&[id]).unwrap()[&id];
-        assert_eq!((h.file_path.as_str(), h.heading.as_str(), h.context_path.as_str(), h.tags.as_str()), ("/v/Target.md", "H0", "Doc > H0", "a, b"));
+        assert_eq!(
+            (
+                h.file_path.as_str(),
+                h.heading.as_str(),
+                h.context_path.as_str(),
+                h.tags.as_str()
+            ),
+            ("/v/Target.md", "H0", "Doc > H0", "a, b")
+        );
         assert_eq!(h.importance_score, 2, "backlinks match case-insensitively");
     }
 
     #[test]
     fn importance_is_capped_and_ignores_self_links() {
         let s = store();
-        s.replace_file(&file("/v/Hub.md", vec![chunk(0, "hub", [1.0, 0.0, 0.0, 0.0])])).unwrap();
+        s.replace_file(&file(
+            "/v/Hub.md",
+            vec![chunk(0, "hub", [1.0, 0.0, 0.0, 0.0])],
+        ))
+        .unwrap();
         s.set_links("/v/Hub.md", &["Hub".into()]).unwrap();
         for i in 0..8 {
-            s.set_links(&format!("/v/n{i}.md"), &["Hub".into()]).unwrap();
+            s.set_links(&format!("/v/n{i}.md"), &["Hub".into()])
+                .unwrap();
         }
         let id = s.knn(&[1.0, 0.0, 0.0, 0.0], 1).unwrap()[0].0;
-        assert_eq!(s.hits(&[id]).unwrap()[&id].importance_score, MAX_BACKLINKS as i64);
+        assert_eq!(
+            s.hits(&[id]).unwrap()[&id].importance_score,
+            MAX_BACKLINKS as i64
+        );
         let titles = s.backlink_titles("Hub", 5).unwrap();
         assert_eq!(titles.len(), 5);
         assert!(!titles.contains(&"Hub".to_string()));
@@ -559,10 +731,16 @@ mod tests {
         s.set_links("/v/a.md", &["B".into(), "C".into()]).unwrap();
         assert_eq!(s.backlink_titles("B", 5).unwrap(), vec!["a"]);
         s.set_links("/v/a.md", &["C".into()]).unwrap();
-        assert!(s.backlink_titles("B", 5).unwrap().is_empty(), "removed link no longer counts");
+        assert!(
+            s.backlink_titles("B", 5).unwrap().is_empty(),
+            "removed link no longer counts"
+        );
         assert_eq!(s.backlink_titles("C", 5).unwrap(), vec!["a"]);
         s.delete_path("/v/a.md").unwrap();
-        assert!(s.backlink_titles("C", 5).unwrap().is_empty(), "deleting the source drops its links");
+        assert!(
+            s.backlink_titles("C", 5).unwrap().is_empty(),
+            "deleting the source drops its links"
+        );
     }
 
     #[test]
@@ -570,14 +748,21 @@ mod tests {
         let s = store();
         s.set_links("/v/a.md", &["B".into()]).unwrap();
         assert!(s.indexed_paths().unwrap().is_empty());
-        assert_eq!(s.file_state("/v/a.md").unwrap(), None, "no hash yet means not indexed");
+        assert_eq!(
+            s.file_state("/v/a.md").unwrap(),
+            None,
+            "no hash yet means not indexed"
+        );
     }
 
     #[test]
     fn vectors_by_hash_returns_stored_vectors_for_reuse() {
         let s = store();
-        s.replace_file(&file("/v/a.md", vec![chunk(0, "x", [0.5, 0.5, 0.0, 0.0])])).unwrap();
-        let got = s.vectors_by_hash(&["hash-x".into(), "hash-nope".into()]).unwrap();
+        s.replace_file(&file("/v/a.md", vec![chunk(0, "x", [0.5, 0.5, 0.0, 0.0])]))
+            .unwrap();
+        let got = s
+            .vectors_by_hash(&["hash-x".into(), "hash-nope".into()])
+            .unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got["hash-x"], vec![0.5, 0.5, 0.0, 0.0]);
         assert!(s.vectors_by_hash(&[]).unwrap().is_empty());
@@ -586,17 +771,39 @@ mod tests {
     #[test]
     fn file_chunk_counts_are_sorted_by_count_desc() {
         let s = store();
-        s.replace_file(&file("/v/one.md", vec![chunk(0, "a", [1.0, 0.0, 0.0, 0.0])])).unwrap();
-        s.replace_file(&file("/v/two.md", vec![chunk(0, "b", [1.0, 0.0, 0.0, 0.0]), chunk(1, "c", [1.0, 0.0, 0.0, 0.0])])).unwrap();
-        assert_eq!(s.file_chunk_counts().unwrap(), vec![("/v/two.md".to_string(), 2), ("/v/one.md".to_string(), 1)]);
+        s.replace_file(&file(
+            "/v/one.md",
+            vec![chunk(0, "a", [1.0, 0.0, 0.0, 0.0])],
+        ))
+        .unwrap();
+        s.replace_file(&file(
+            "/v/two.md",
+            vec![
+                chunk(0, "b", [1.0, 0.0, 0.0, 0.0]),
+                chunk(1, "c", [1.0, 0.0, 0.0, 0.0]),
+            ],
+        ))
+        .unwrap();
+        assert_eq!(
+            s.file_chunk_counts().unwrap(),
+            vec![("/v/two.md".to_string(), 2), ("/v/one.md".to_string(), 1)]
+        );
     }
 
     #[test]
     fn vector_sample_returns_one_node_per_file_with_truncated_text() {
         let s = store();
         let long = "z".repeat(300);
-        s.replace_file(&file("/v/a.md", vec![chunk(0, &long, [1.0, 0.0, 0.0, 0.0]), chunk(1, "second", [0.0, 1.0, 0.0, 0.0])])).unwrap();
-        s.replace_file(&file("/v/b.md", vec![chunk(0, "b", [0.0, 0.0, 1.0, 0.0])])).unwrap();
+        s.replace_file(&file(
+            "/v/a.md",
+            vec![
+                chunk(0, &long, [1.0, 0.0, 0.0, 0.0]),
+                chunk(1, "second", [0.0, 1.0, 0.0, 0.0]),
+            ],
+        ))
+        .unwrap();
+        s.replace_file(&file("/v/b.md", vec![chunk(0, "b", [0.0, 0.0, 1.0, 0.0])]))
+            .unwrap();
         let nodes = s.vector_sample(10).unwrap();
         assert_eq!(nodes.len(), 2);
         let a = nodes.iter().find(|n| n.id == "/v/a.md").unwrap();

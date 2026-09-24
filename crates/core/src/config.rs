@@ -13,7 +13,12 @@ pub struct FileTypes {
 
 impl Default for FileTypes {
     fn default() -> Self {
-        Self { markdown: true, pdf: true, docx: true, html: false }
+        Self {
+            markdown: true,
+            pdf: true,
+            docx: true,
+            html: false,
+        }
     }
 }
 
@@ -48,7 +53,9 @@ impl Default for Config {
             local_model_name: "Xenova/all-MiniLM-L6-v2".into(),
             chunk_size: 512,
             chunk_overlap: 64,
-            exclude_patterns: [".git", "node_modules", ".obsidian", ".claude"].map(String::from).to_vec(),
+            exclude_patterns: [".git", "node_modules", ".obsidian", ".claude"]
+                .map(String::from)
+                .to_vec(),
             auto_index_on_change: true,
             indexing_debounce_ms: 5_000,
             file_types: FileTypes::default(),
@@ -64,7 +71,10 @@ impl Default for Config {
 }
 
 pub fn default_config_path() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("anamnesis").join("config.json")
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("anamnesis")
+        .join("config.json")
 }
 
 impl Config {
@@ -78,7 +88,12 @@ impl Config {
             Err(_) => Config::default(),
         };
         if cfg.data_dir.is_empty() {
-            cfg.data_dir = path.parent().unwrap_or(Path::new(".")).join("data").to_string_lossy().into();
+            cfg.data_dir = path
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join("data")
+                .to_string_lossy()
+                .into();
         }
         cfg.clamp();
         cfg
@@ -142,7 +157,10 @@ mod tests {
         let c = Config::load(&p);
         assert_eq!(c.chunk_size, 512);
         assert_eq!(c.mcp_port, 8867);
-        assert_eq!(c.exclude_patterns, vec![".git", "node_modules", ".obsidian", ".claude"]);
+        assert_eq!(
+            c.exclude_patterns,
+            vec![".git", "node_modules", ".obsidian", ".claude"]
+        );
         assert_eq!(PathBuf::from(&c.data_dir), d.path().join("data"));
     }
 
@@ -162,7 +180,10 @@ mod tests {
         let c = Config::load(&p);
         assert_eq!(c.watch_dirs, vec!["/v"]);
         assert_eq!(c.embedding_provider, "local", "OpenAI provider was dropped");
-        assert!(c.file_types.html && c.file_types.markdown, "nested defaults survive");
+        assert!(
+            c.file_types.html && c.file_types.markdown,
+            "nested defaults survive"
+        );
     }
 
     #[test]
@@ -194,11 +215,16 @@ mod tests {
     #[test]
     fn merged_applies_partial_update_and_rejects_non_objects() {
         let c = Config::default();
-        let m = c.merged(&json!({"hybridSearch": false, "dirExcludePatterns": {"/v": ["*.pdf"]}})).unwrap();
+        let m = c
+            .merged(&json!({"hybridSearch": false, "dirExcludePatterns": {"/v": ["*.pdf"]}}))
+            .unwrap();
         assert!(!m.hybrid_search);
         assert_eq!(m.dir_exclude_patterns["/v"], vec!["*.pdf"]);
         assert_eq!(m.chunk_size, c.chunk_size);
         assert!(c.merged(&json!([1, 2])).is_err());
-        assert!(c.merged(&json!({"chunkSize": "big"})).is_err(), "type errors surface to the UI");
+        assert!(
+            c.merged(&json!({"chunkSize": "big"})).is_err(),
+            "type errors surface to the UI"
+        );
     }
 }

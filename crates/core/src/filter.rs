@@ -14,8 +14,15 @@ impl Pattern {
     fn compile(p: &str) -> Option<Pattern> {
         let p = p.replace('\\', "/");
         let p = p.trim_matches('/');
-        let glob = globset::GlobBuilder::new(p).literal_separator(true).build().ok()?.compile_matcher();
-        Some(Pattern { glob, bare: !p.contains('/') })
+        let glob = globset::GlobBuilder::new(p)
+            .literal_separator(true)
+            .build()
+            .ok()?
+            .compile_matcher();
+        Some(Pattern {
+            glob,
+            bare: !p.contains('/'),
+        })
     }
 
     fn matches(&self, rel: &Path) -> bool {
@@ -41,15 +48,25 @@ pub struct Filter {
 impl Filter {
     pub fn new(cfg: &Config) -> Filter {
         let ft = &cfg.file_types;
-        let exts = [("md", ft.markdown), ("pdf", ft.pdf), ("docx", ft.docx), ("html", ft.html), ("htm", ft.html)]
-            .into_iter()
-            .filter_map(|(e, on)| on.then_some(e))
-            .collect();
+        let exts = [
+            ("md", ft.markdown),
+            ("pdf", ft.pdf),
+            ("docx", ft.docx),
+            ("html", ft.html),
+            ("htm", ft.html),
+        ]
+        .into_iter()
+        .filter_map(|(e, on)| on.then_some(e))
+        .collect();
         Filter {
             roots: cfg.watch_dirs.iter().map(PathBuf::from).collect(),
             exts,
             global: compile_all(&cfg.exclude_patterns),
-            per_dir: cfg.dir_exclude_patterns.iter().map(|(d, ps)| (PathBuf::from(d), compile_all(ps))).collect(),
+            per_dir: cfg
+                .dir_exclude_patterns
+                .iter()
+                .map(|(d, ps)| (PathBuf::from(d), compile_all(ps)))
+                .collect(),
         }
     }
 
@@ -67,20 +84,32 @@ impl Filter {
 
     /// The watch dir that owns `path` (longest match), if any.
     pub fn root_of(&self, path: &Path) -> Option<PathBuf> {
-        self.roots.iter().filter(|r| path.starts_with(r)).max_by_key(|r| r.components().count()).cloned()
+        self.roots
+            .iter()
+            .filter(|r| path.starts_with(r))
+            .max_by_key(|r| r.components().count())
+            .cloned()
     }
 
     /// Inside a watch dir, no dot component, not excluded (extension not checked).
     pub fn allowed(&self, path: &Path) -> bool {
-        let Some(root) = self.root_of(path) else { return false };
+        let Some(root) = self.root_of(path) else {
+            return false;
+        };
         let rel = path.strip_prefix(&root).unwrap_or(path);
-        if rel.components().any(|c| c.as_os_str().to_string_lossy().starts_with('.')) {
+        if rel
+            .components()
+            .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+        {
             return false;
         }
         if self.global.iter().any(|p| p.matches(rel)) {
             return false;
         }
-        !self.per_dir.iter().any(|(dir, ps)| path.strip_prefix(dir).is_ok_and(|r| ps.iter().any(|p| p.matches(r))))
+        !self.per_dir.iter().any(|(dir, ps)| {
+            path.strip_prefix(dir)
+                .is_ok_and(|r| ps.iter().any(|p| p.matches(r)))
+        })
     }
 }
 
@@ -90,7 +119,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn cfg() -> Config {
-        Config { watch_dirs: vec!["/v".into(), "/w".into()], ..Config::default() }
+        Config {
+            watch_dirs: vec!["/v".into(), "/w".into()],
+            ..Config::default()
+        }
     }
 
     fn ok(f: &Filter, p: &str) -> bool {
@@ -129,13 +161,21 @@ mod tests {
     #[test]
     fn global_excludes_match_any_component_or_glob() {
         let mut c = cfg();
-        c.exclude_patterns = vec!["node_modules".into(), "*.pdf".into(), "Archives/**".into(), "draft-*".into()];
+        c.exclude_patterns = vec![
+            "node_modules".into(),
+            "*.pdf".into(),
+            "Archives/**".into(),
+            "draft-*".into(),
+        ];
         let f = Filter::new(&c);
         assert!(!ok(&f, "/v/x/node_modules/a.md"));
         assert!(!ok(&f, "/v/a.pdf"));
         assert!(!ok(&f, "/v/Archives/old/a.md"));
         assert!(ok(&f, "/v/Notes/Archives.md"));
-        assert!(!ok(&f, "/v/sub/draft-1.md"), "matchBase: bare pattern hits basenames anywhere");
+        assert!(
+            !ok(&f, "/v/sub/draft-1.md"),
+            "matchBase: bare pattern hits basenames anywhere"
+        );
         assert!(ok(&f, "/v/sub/final.md"));
     }
 
@@ -169,9 +209,15 @@ mod tests {
 
     #[test]
     fn root_of_picks_longest_watch_dir() {
-        let c = Config { watch_dirs: vec!["/v".into(), "/v/inner".into()], ..Config::default() };
+        let c = Config {
+            watch_dirs: vec!["/v".into(), "/v/inner".into()],
+            ..Config::default()
+        };
         let f = Filter::new(&c);
-        assert_eq!(f.root_of(Path::new("/v/inner/a.md")), Some(PathBuf::from("/v/inner")));
+        assert_eq!(
+            f.root_of(Path::new("/v/inner/a.md")),
+            Some(PathBuf::from("/v/inner"))
+        );
         assert_eq!(f.root_of(Path::new("/v/a.md")), Some(PathBuf::from("/v")));
         assert_eq!(f.root_of(Path::new("/x/a.md")), None);
     }

@@ -11,7 +11,9 @@ pub struct ParsedDoc {
 pub const SUPPORTED_EXTENSIONS: &[&str] = &["md", "pdf", "docx", "html", "htm"];
 
 pub fn extension(path: &Path) -> String {
-    path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default()
+    path.extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default()
 }
 
 /// Parses file bytes by extension. `None` for unsupported or unparsable input, never a panic.
@@ -28,20 +30,40 @@ pub fn parse(path: &Path, bytes: &[u8]) -> Option<ParsedDoc> {
 fn markdown(content: &str) -> ParsedDoc {
     let matter = gray_matter::Matter::<gray_matter::engine::YAML>::new();
     let Ok(parsed) = matter.parse::<serde_json::Value>(content) else {
-        return ParsedDoc { text: content.to_string(), tags: vec![] };
+        return ParsedDoc {
+            text: content.to_string(),
+            tags: vec![],
+        };
     };
     let tags = match parsed.data.as_ref().and_then(|d| d.get("tags")) {
-        Some(serde_json::Value::Array(a)) => a.iter().map(|v| v.as_str().map(String::from).unwrap_or_else(|| v.to_string())).collect(),
-        Some(serde_json::Value::String(s)) => s.split(|c: char| c == ',' || c.is_whitespace()).filter(|t| !t.is_empty()).map(String::from).collect(),
+        Some(serde_json::Value::Array(a)) => a
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(String::from)
+                    .unwrap_or_else(|| v.to_string())
+            })
+            .collect(),
+        Some(serde_json::Value::String(s)) => s
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|t| !t.is_empty())
+            .map(String::from)
+            .collect(),
         _ => vec![],
     };
-    let text = if parsed.data.is_some() { parsed.content } else { content.to_string() };
+    let text = if parsed.data.is_some() {
+        parsed.content
+    } else {
+        content.to_string()
+    };
     ParsedDoc { text, tags }
 }
 
 fn pdf(bytes: &[u8]) -> Option<ParsedDoc> {
     // pdf-extract panics on some malformed files; a bad PDF must never take the indexer down.
-    let text = std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem(bytes)).ok()?.ok()?;
+    let text = std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem(bytes))
+        .ok()?
+        .ok()?;
     let text = text.trim().to_string();
     (!text.is_empty()).then_some(ParsedDoc { text, tags: vec![] })
 }
@@ -53,13 +75,23 @@ fn docx(bytes: &[u8]) -> Option<String> {
     let mut xml = String::new();
     std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").ok()?, &mut xml).ok()?;
     let mut reader = quick_xml::Reader::from_str(&xml);
-    let (mut paras, mut line, mut level, mut in_text) = (Vec::<String>::new(), String::new(), 0usize, false);
+    let (mut paras, mut line, mut level, mut in_text) =
+        (Vec::<String>::new(), String::new(), 0usize, false);
     loop {
         match reader.read_event().ok()? {
             Event::Start(e) | Event::Empty(e) => match e.name().as_ref() {
                 "w:pStyle" => {
-                    let val = e.try_get_attribute("w:val").ok().flatten().map(|a| a.value.to_string()).unwrap_or_default();
-                    level = val.strip_prefix("Heading").and_then(|n| n.parse().ok()).filter(|n| (1..=6).contains(n)).unwrap_or(0);
+                    let val = e
+                        .try_get_attribute("w:val")
+                        .ok()
+                        .flatten()
+                        .map(|a| a.value.to_string())
+                        .unwrap_or_default();
+                    level = val
+                        .strip_prefix("Heading")
+                        .and_then(|n| n.parse().ok())
+                        .filter(|n| (1..=6).contains(n))
+                        .unwrap_or(0);
                 }
                 "w:t" => in_text = true,
                 "w:tab" => line.push('\t'),
@@ -71,7 +103,14 @@ fn docx(bytes: &[u8]) -> Option<String> {
                 if let Ok(Some(c)) = r.resolve_char_ref() {
                     line.push(c);
                 } else {
-                    line.push_str(match &*r { "amp" => "&", "lt" => "<", "gt" => ">", "quot" => "\"", "apos" => "'", _ => "" });
+                    line.push_str(match &*r {
+                        "amp" => "&",
+                        "lt" => "<",
+                        "gt" => ">",
+                        "quot" => "\"",
+                        "apos" => "'",
+                        _ => "",
+                    });
                 }
             }
             Event::End(e) => match e.name().as_ref() {
@@ -79,7 +118,11 @@ fn docx(bytes: &[u8]) -> Option<String> {
                 "w:p" => {
                     let text = std::mem::take(&mut line);
                     if !text.trim().is_empty() {
-                        paras.push(if level > 0 { format!("{} {}", "#".repeat(level), text.trim()) } else { text });
+                        paras.push(if level > 0 {
+                            format!("{} {}", "#".repeat(level), text.trim())
+                        } else {
+                            text
+                        });
                     }
                     level = 0;
                 }
@@ -94,18 +137,29 @@ fn docx(bytes: &[u8]) -> Option<String> {
 
 /// Readability extracts the main article (strips nav/ads); plain conversion if it finds none.
 fn html(content: &str) -> String {
-    let article = dom_smoothie::Readability::new(content, None, None).ok().and_then(|mut r| r.parse().ok());
-    let body = article.map(|a| a.content.to_string()).unwrap_or_else(|| content.to_string());
+    let article = dom_smoothie::Readability::new(content, None, None)
+        .ok()
+        .and_then(|mut r| r.parse().ok());
+    let body = article
+        .map(|a| a.content.to_string())
+        .unwrap_or_else(|| content.to_string());
     htmd::convert(&body).unwrap_or(body)
 }
 
 /// Wikilink targets: `[[T]]`, `[[T|alias]]`, `[[T#section]]`, `[[folder/T]]` → `T`. Deduplicated.
 pub fn wikilinks(text: &str) -> Vec<String> {
-    static RE: std::sync::LazyLock<regex::Regex> =
-        std::sync::LazyLock::new(|| regex::Regex::new(r"\[\[([^\]|#]+)(?:[|#][^\]]+)?\]\]").unwrap());
+    static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\[\[([^\]|#]+)(?:[|#][^\]]+)?\]\]").unwrap()
+    });
     let mut out: Vec<String> = vec![];
     for m in RE.captures_iter(text) {
-        let t = m[1].trim().rsplit('/').next().unwrap_or("").trim().to_string();
+        let t = m[1]
+            .trim()
+            .rsplit('/')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
         if !t.is_empty() && !out.contains(&t) {
             out.push(t);
         }
@@ -134,8 +188,14 @@ mod tests {
         let d = md("---\ntags: [ai, research]\ntitle: x\n---\n# Body\ntext");
         assert_eq!(d.tags, vec!["ai", "research"]);
         assert!(d.text.trim_start().starts_with("# Body") && !d.text.contains("title:"));
-        assert_eq!(md("---\ntags: ai, research  notes\n---\nx").tags, vec!["ai", "research", "notes"]);
-        assert_eq!(md("---\ntags:\n  - one\n  - 2\n---\nx").tags, vec!["one", "2"]);
+        assert_eq!(
+            md("---\ntags: ai, research  notes\n---\nx").tags,
+            vec!["ai", "research", "notes"]
+        );
+        assert_eq!(
+            md("---\ntags:\n  - one\n  - 2\n---\nx").tags,
+            vec!["one", "2"]
+        );
     }
 
     #[test]
@@ -163,7 +223,9 @@ mod tests {
             let mut z = zip::ZipWriter::new(&mut buf);
             let opts = zip::write::SimpleFileOptions::default();
             z.start_file("word/document.xml", opts).unwrap();
-            let xml = format!(r#"<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body_xml}</w:body></w:document>"#);
+            let xml = format!(
+                r#"<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body_xml}</w:body></w:document>"#
+            );
             z.write_all(xml.as_bytes()).unwrap();
             z.finish().unwrap();
         }
@@ -177,7 +239,10 @@ mod tests {
             <w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Details</w:t></w:r></w:p>
             <w:p><w:r><w:t>More</w:t></w:r><w:r><w:tab/><w:t>tabbed</w:t></w:r></w:p>"#;
         let d = parse(Path::new("/v/a.docx"), &docx(body)).unwrap();
-        assert_eq!(d.text, "# Intro\n\nHello world\n\n## Details\n\nMore\ttabbed");
+        assert_eq!(
+            d.text,
+            "# Intro\n\nHello world\n\n## Details\n\nMore\ttabbed"
+        );
     }
 
     #[test]
@@ -226,7 +291,13 @@ mod tests {
         for off in offsets {
             out.extend(format!("{off:010} 00000 n \n").bytes());
         }
-        out.extend(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).bytes());
+        out.extend(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+                objs.len() + 1
+            )
+            .bytes(),
+        );
         out
     }
 

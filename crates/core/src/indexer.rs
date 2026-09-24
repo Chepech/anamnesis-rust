@@ -1,6 +1,9 @@
 //! Walk → parse → chunk → embed → write, with three dedup levels:
-//! 1. mtime unchanged → skip without reading; 2. content hash unchanged → touch mtime only;
+//!
+//! 1. mtime unchanged → skip without reading.
+//! 2. content hash unchanged → touch mtime only.
 //! 3. chunk embed-text hash already stored (any file) → reuse its vector, no ORT call.
+//!
 //! New chunks from many files are embedded together in batches of `EMBED_BATCH`.
 
 use crate::chunker::split_markdown;
@@ -68,13 +71,25 @@ pub struct Report {
 
 /// `[title] > [context] :: text`, breadcrumb capped at 150 chars, backlinks appended when given.
 pub fn embed_text(title: &str, context_path: &str, text: &str, backlinks: &[String]) -> String {
-    let crumb = if context_path.is_empty() { format!("[{title}]") } else { format!("[{title}] > [{context_path}]") };
+    let crumb = if context_path.is_empty() {
+        format!("[{title}]")
+    } else {
+        format!("[{title}] > [{context_path}]")
+    };
     let crumb = if crumb.chars().count() > BREADCRUMB_MAX_CHARS {
-        crumb.chars().take(BREADCRUMB_MAX_CHARS - 3).chain("...".chars()).collect()
+        crumb
+            .chars()
+            .take(BREADCRUMB_MAX_CHARS - 3)
+            .chain("...".chars())
+            .collect()
     } else {
         crumb
     };
-    let suffix = if backlinks.is_empty() { String::new() } else { format!(" Linked from: {}", backlinks.join(", ")) };
+    let suffix = if backlinks.is_empty() {
+        String::new()
+    } else {
+        format!(" Linked from: {}", backlinks.join(", "))
+    };
     format!("{crumb} :: {text}{suffix}")
 }
 
@@ -98,13 +113,19 @@ struct Changed {
     hash: String,
 }
 
+/// Tags plus (chunk, embed text, embed hash) per chunk.
+type Parsed = (String, Vec<(crate::chunker::Chunk, String, String)>);
+
 struct Prepared<'a> {
     changed: &'a Changed,
-    doc: Option<(String, Vec<(crate::chunker::Chunk, String, String)>)>, // tags, (chunk, embed text, embed hash)
+    doc: Option<Parsed>,
 }
 
 fn mtime_ns(meta: &std::fs::Metadata) -> i64 {
-    meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as i64)
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos() as i64)
 }
 
 fn key(p: &Path) -> String {
@@ -112,7 +133,11 @@ fn key(p: &Path) -> String {
 }
 
 impl Indexer {
-    pub fn new(store: Arc<Store>, embedder: Arc<dyn Embedder>, cfg: Arc<RwLock<Config>>) -> Indexer {
+    pub fn new(
+        store: Arc<Store>,
+        embedder: Arc<dyn Embedder>,
+        cfg: Arc<RwLock<Config>>,
+    ) -> Indexer {
         Indexer {
             store,
             embedder,
@@ -154,7 +179,10 @@ impl Indexer {
         if force {
             self.store.clear()?;
         }
-        let files = walk(&filter, &cfg.watch_dirs.iter().map(PathBuf::from).collect::<Vec<_>>());
+        let files = walk(
+            &filter,
+            &cfg.watch_dirs.iter().map(PathBuf::from).collect::<Vec<_>>(),
+        );
         let on_disk: HashSet<String> = files.iter().map(|p| key(p)).collect();
         let mut report = Report::default();
         for p in self.store.indexed_paths()? {
@@ -172,7 +200,13 @@ impl Indexer {
         let filter = Filter::new(&cfg);
         let mut files: Vec<PathBuf> = paths
             .iter()
-            .flat_map(|p| if p.is_dir() { walk(&filter, std::slice::from_ref(p)) } else { vec![p.clone()] })
+            .flat_map(|p| {
+                if p.is_dir() {
+                    walk(&filter, std::slice::from_ref(p))
+                } else {
+                    vec![p.clone()]
+                }
+            })
             .filter(|p| p.is_file() && filter.is_indexable(p))
             .collect();
         files.sort();
@@ -215,7 +249,11 @@ impl Indexer {
             while self.is_paused() && !self.cancelled.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_millis(50));
             }
-            self.set_status(IndexStatus::Indexing { current, total, label: None });
+            self.set_status(IndexStatus::Indexing {
+                current,
+                total,
+                label: None,
+            });
         }
         !self.cancelled.load(Ordering::SeqCst)
     }
@@ -227,14 +265,20 @@ impl Indexer {
         self.paused.store(false, Ordering::SeqCst);
         match &result {
             Ok(_) => self.set_status(IndexStatus::Idle),
-            Err(e) => self.set_status(IndexStatus::Error { message: e.to_string() }),
+            Err(e) => self.set_status(IndexStatus::Error {
+                message: e.to_string(),
+            }),
         }
         result
     }
 
     fn pipeline(&self, files: Vec<PathBuf>, cfg: &Config, mut report: Report) -> Result<Report> {
         let total = files.len();
-        self.set_status(IndexStatus::Indexing { current: 0, total, label: None });
+        self.set_status(IndexStatus::Indexing {
+            current: 0,
+            total,
+            label: None,
+        });
 
         // Pass A: change detection (dedup levels 1 and 2) and wikilinks for every changed file,
         // so backlinks are complete before any embed text is built.
@@ -243,14 +287,18 @@ impl Indexer {
             if !self.checkpoint(i, total) {
                 return Ok(report);
             }
-            let Ok(meta) = std::fs::metadata(&path) else { continue };
+            let Ok(meta) = std::fs::metadata(&path) else {
+                continue;
+            };
             let (k, mtime) = (key(&path), mtime_ns(&meta));
             let state = self.store.file_state(&k)?;
             if state.as_ref().is_some_and(|s| s.mtime_ns == mtime) {
                 report.unchanged += 1;
                 continue;
             }
-            let Ok(bytes) = std::fs::read(&path) else { continue };
+            let Ok(bytes) = std::fs::read(&path) else {
+                continue;
+            };
             let hash = blake3::hash(&bytes).to_hex().to_string();
             if state.is_some_and(|s| s.content_hash == hash) {
                 self.store.touch_file(&k, mtime)?;
@@ -258,9 +306,14 @@ impl Indexer {
                 continue;
             }
             if parsers::extension(&path) == "md" {
-                self.store.set_links(&k, &wikilinks(&String::from_utf8_lossy(&bytes)))?;
+                self.store
+                    .set_links(&k, &wikilinks(&String::from_utf8_lossy(&bytes)))?;
             }
-            changed.push(Changed { path, mtime_ns: mtime, hash });
+            changed.push(Changed {
+                path,
+                mtime_ns: mtime,
+                hash,
+            });
         }
 
         // Pass B: parse in parallel, embed only chunk texts not already stored (dedup level 3),
@@ -271,10 +324,27 @@ impl Indexer {
             if !self.checkpoint(current, total) {
                 return Ok(report);
             }
-            self.set_status(IndexStatus::Indexing { current, total, label: group.first().map(|c| stem_of(&key(&c.path))) });
-            let prepared: Vec<Prepared> = group.par_iter().map(|c| Prepared { doc: self.prepare(&c.path, cfg), changed: c }).collect();
+            self.set_status(IndexStatus::Indexing {
+                current,
+                total,
+                label: group.first().map(|c| stem_of(&key(&c.path))),
+            });
+            let prepared: Vec<Prepared> = group
+                .par_iter()
+                .map(|c| Prepared {
+                    doc: self.prepare(&c.path, cfg),
+                    changed: c,
+                })
+                .collect();
 
-            let hashes: Vec<String> = prepared.iter().flat_map(|p| p.doc.iter().flat_map(|(_, cs)| cs.iter().map(|c| c.2.clone()))).collect();
+            let hashes: Vec<String> = prepared
+                .iter()
+                .flat_map(|p| {
+                    p.doc
+                        .iter()
+                        .flat_map(|(_, cs)| cs.iter().map(|c| c.2.clone()))
+                })
+                .collect();
             let mut vectors = self.store.vectors_by_hash(&hashes)?;
             let mut missing: Vec<(String, String)> = vec![];
             let mut seen: HashSet<&str> = vectors.keys().map(String::as_str).collect();
@@ -292,7 +362,12 @@ impl Indexer {
                 }
                 let texts: Vec<String> = batch.iter().map(|(_, t)| t.clone()).collect();
                 let embedded = self.embedder.embed(&texts)?;
-                anyhow::ensure!(embedded.len() == batch.len(), "embedder returned {} vectors for {} texts", embedded.len(), batch.len());
+                anyhow::ensure!(
+                    embedded.len() == batch.len(),
+                    "embedder returned {} vectors for {} texts",
+                    embedded.len(),
+                    batch.len()
+                );
                 report.embedded += batch.len();
                 vectors.extend(batch.iter().map(|(h, _)| h.clone()).zip(embedded));
             }
@@ -321,23 +396,36 @@ impl Indexer {
                         embed_hash: hash,
                     })
                     .collect();
-                self.store.replace_file(&FileRecord { path: key(&p.changed.path), mtime_ns: p.changed.mtime_ns, content_hash: p.changed.hash.clone(), tags, chunks: rows })?;
+                self.store.replace_file(&FileRecord {
+                    path: key(&p.changed.path),
+                    mtime_ns: p.changed.mtime_ns,
+                    content_hash: p.changed.hash.clone(),
+                    tags,
+                    chunks: rows,
+                })?;
             }
         }
         Ok(report)
     }
 
     /// Reads, parses and chunks one file. `None` when it cannot be parsed.
-    #[allow(clippy::type_complexity)]
-    fn prepare(&self, path: &Path, cfg: &Config) -> Option<(String, Vec<(crate::chunker::Chunk, String, String)>)> {
+    fn prepare(&self, path: &Path, cfg: &Config) -> Option<Parsed> {
         let bytes = std::fs::read(path).ok()?;
         let doc = parsers::parse(path, &bytes)?;
         let title = stem_of(&key(path));
-        let backlinks = self.store.backlink_titles(&title, MAX_BACKLINKS).unwrap_or_default();
+        let backlinks = self
+            .store
+            .backlink_titles(&title, MAX_BACKLINKS)
+            .unwrap_or_default();
         let chunks = split_markdown(&doc.text, cfg.chunk_size, cfg.chunk_overlap)
             .into_iter()
             .map(|c| {
-                let text = embed_text(&title, &c.context_path, &c.text, if c.chunk_index == 0 { &backlinks } else { &[] });
+                let text = embed_text(
+                    &title,
+                    &c.context_path,
+                    &c.text,
+                    if c.chunk_index == 0 { &backlinks } else { &[] },
+                );
                 let hash = blake3::hash(text.as_bytes()).to_hex().to_string();
                 (c, text, hash)
             })
@@ -354,7 +442,11 @@ fn walk(filter: &Filter, roots: &[PathBuf]) -> Vec<PathBuf> {
             .standard_filters(false)
             .filter_entry({
                 let root = root.clone();
-                move |e| e.path() == root || !e.file_type().is_some_and(|t| t.is_dir()) || !e.file_name().to_string_lossy().starts_with('.')
+                move |e| {
+                    e.path() == root
+                        || !e.file_type().is_some_and(|t| t.is_dir())
+                        || !e.file_name().to_string_lossy().starts_with('.')
+                }
             })
             .build();
         for e in walker.flatten() {
@@ -386,7 +478,12 @@ pub(crate) mod tests {
 
     impl Counting {
         pub fn new() -> Arc<Counting> {
-            Arc::new(Counting { inner: HashEmbedder::new(32), calls: 0.into(), texts: Mutex::new(vec![]), fail: false.into() })
+            Arc::new(Counting {
+                inner: HashEmbedder::new(32),
+                calls: 0.into(),
+                texts: Mutex::new(vec![]),
+                fail: false.into(),
+            })
         }
         pub fn embedded(&self) -> usize {
             self.texts.lock().unwrap().len()
@@ -423,9 +520,18 @@ pub(crate) mod tests {
             let dir = tempfile::tempdir().unwrap();
             let store = Arc::new(Store::open_in_memory("counting", 32).unwrap());
             let emb = Counting::new();
-            let cfg = Arc::new(RwLock::new(Config { watch_dirs: vec![dir.path().to_string_lossy().into()], ..Config::default() }));
+            let cfg = Arc::new(RwLock::new(Config {
+                watch_dirs: vec![dir.path().to_string_lossy().into()],
+                ..Config::default()
+            }));
             let idx = Indexer::new(store.clone(), emb.clone(), cfg.clone());
-            Fixture { dir, store, emb, cfg, idx }
+            Fixture {
+                dir,
+                store,
+                emb,
+                cfg,
+                idx,
+            }
         }
         pub fn path(&self, rel: &str) -> PathBuf {
             self.dir.path().join(rel)
@@ -451,8 +557,14 @@ pub(crate) mod tests {
     #[test]
     fn embed_text_formats_breadcrumb_and_backlinks() {
         assert_eq!(embed_text("Note", "", "body", &[]), "[Note] :: body");
-        assert_eq!(embed_text("Note", "A > B", "body", &[]), "[Note] > [A > B] :: body");
-        assert_eq!(embed_text("N", "", "b", &["X".into(), "Y".into()]), "[N] :: b Linked from: X, Y");
+        assert_eq!(
+            embed_text("Note", "A > B", "body", &[]),
+            "[Note] > [A > B] :: body"
+        );
+        assert_eq!(
+            embed_text("N", "", "b", &["X".into(), "Y".into()]),
+            "[N] :: b Linked from: X, Y"
+        );
         let long = "c".repeat(300);
         let t = embed_text("N", &long, "b", &[]);
         let crumb = t.split(" :: ").next().unwrap();
@@ -469,7 +581,10 @@ pub(crate) mod tests {
         f.write(".obsidian/c.md", "hidden");
         let r = f.idx.sync(false).unwrap();
         assert_eq!(r.indexed, 2);
-        assert_eq!(f.store.indexed_paths().unwrap(), vec![f.key("a.md"), f.key("sub/b.md")]);
+        assert_eq!(
+            f.store.indexed_paths().unwrap(),
+            vec![f.key("a.md"), f.key("sub/b.md")]
+        );
         assert_eq!(f.idx.status(), IndexStatus::Idle);
     }
 
@@ -494,14 +609,24 @@ pub(crate) mod tests {
         let r = f.idx.index_paths(&[f.path("a.md")]).unwrap();
         assert_eq!((r.touched, r.indexed, r.embedded), (1, 0, 0));
         let after = f.store.file_state(&f.key("a.md")).unwrap().unwrap();
-        assert_ne!(before.mtime_ns, after.mtime_ns, "mtime recorded so the next pass skips cheaply");
+        assert_ne!(
+            before.mtime_ns, after.mtime_ns,
+            "mtime recorded so the next pass skips cheaply"
+        );
         assert_eq!(before.content_hash, after.content_hash);
     }
 
     #[test]
     fn editing_one_section_only_embeds_changed_chunks() {
         let f = Fixture::new();
-        let big = |s: &str| format!("# One\n{}\n# Two\n{}\n# Three\n{}", "a ".repeat(100), s, "c ".repeat(100));
+        let big = |s: &str| {
+            format!(
+                "# One\n{}\n# Two\n{}\n# Three\n{}",
+                "a ".repeat(100),
+                s,
+                "c ".repeat(100)
+            )
+        };
         f.write("a.md", &big(&"b ".repeat(100)));
         f.idx.sync(false).unwrap();
         let first = f.emb.embedded();
@@ -531,7 +656,11 @@ pub(crate) mod tests {
         }
         f.idx.sync(false).unwrap();
         assert_eq!(f.emb.embedded(), 100);
-        assert_eq!(f.emb.calls.load(Ordering::SeqCst), 2, "100 chunks / batch 64 = 2 calls, not 100");
+        assert_eq!(
+            f.emb.calls.load(Ordering::SeqCst),
+            2,
+            "100 chunks / batch 64 = 2 calls, not 100"
+        );
     }
 
     #[test]
@@ -542,7 +671,11 @@ pub(crate) mod tests {
         f.write("private/p.md", "p");
         f.idx.sync(false).unwrap();
         std::fs::remove_file(f.path("gone.md")).unwrap();
-        f.cfg.write().unwrap().exclude_patterns.push("private".into());
+        f.cfg
+            .write()
+            .unwrap()
+            .exclude_patterns
+            .push("private".into());
         let r = f.idx.sync(false).unwrap();
         assert_eq!(r.deleted, 2);
         assert_eq!(f.store.indexed_paths().unwrap(), vec![f.key("keep.md")]);
@@ -573,10 +706,28 @@ pub(crate) mod tests {
         f.write("Source.md", "points to [[Target]]");
         f.write("Target.md", "the target");
         f.idx.sync(false).unwrap();
-        assert!(f.emb.texts.lock().unwrap().iter().any(|t| t == "[Target] :: the target Linked from: Source"));
+        assert!(f
+            .emb
+            .texts
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|t| t == "[Target] :: the target Linked from: Source"));
         let imp = |f: &Fixture| {
-            let (id, _) = f.store.knn(&HashEmbedder::new(32).embed(&["the target".into()]).unwrap()[0], 10).unwrap()
-                .into_iter().find(|(id, _)| f.store.hits(&[*id]).unwrap()[id].file_path.ends_with("Target.md")).unwrap();
+            let (id, _) = f
+                .store
+                .knn(
+                    &HashEmbedder::new(32).embed(&["the target".into()]).unwrap()[0],
+                    10,
+                )
+                .unwrap()
+                .into_iter()
+                .find(|(id, _)| {
+                    f.store.hits(&[*id]).unwrap()[id]
+                        .file_path
+                        .ends_with("Target.md")
+                })
+                .unwrap();
             f.store.hits(&[id]).unwrap()[&id].importance_score
         };
         assert_eq!(imp(&f), 1);
@@ -592,7 +743,13 @@ pub(crate) mod tests {
         f.write("a.md", "first");
         f.write("z.md", "[[a]]");
         f.idx.sync(false).unwrap();
-        assert!(f.emb.texts.lock().unwrap().iter().any(|t| t == "[a] :: first Linked from: z"));
+        assert!(f
+            .emb
+            .texts
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|t| t == "[a] :: first Linked from: z"));
     }
 
     #[test]
@@ -623,7 +780,10 @@ pub(crate) mod tests {
         f.write("d/one.md", "1");
         f.write("two.md", "2");
         f.idx.sync(false).unwrap();
-        let r = f.idx.delete_paths(&[f.path("d"), f.path("two.md")]).unwrap();
+        let r = f
+            .idx
+            .delete_paths(&[f.path("d"), f.path("two.md")])
+            .unwrap();
         assert_eq!(r.deleted, 2);
         assert_eq!(f.store.chunk_count().unwrap(), 0);
     }
@@ -634,9 +794,15 @@ pub(crate) mod tests {
         f.write("a.md", "alpha");
         f.emb.fail.store(true, Ordering::SeqCst);
         assert!(f.idx.sync(false).is_err());
-        assert!(matches!(f.idx.status(), IndexStatus::Error { message } if message.contains("exploded")));
+        assert!(
+            matches!(f.idx.status(), IndexStatus::Error { message } if message.contains("exploded"))
+        );
         assert_eq!(f.store.chunk_count().unwrap(), 0);
-        assert_eq!(f.store.file_state(&f.key("a.md")).unwrap(), None, "no hash stored, so a retry re-indexes");
+        assert_eq!(
+            f.store.file_state(&f.key("a.md")).unwrap(),
+            None,
+            "no hash stored, so a retry re-indexes"
+        );
         f.emb.fail.store(false, Ordering::SeqCst);
         assert_eq!(f.idx.sync(false).unwrap().indexed, 1);
     }
@@ -649,18 +815,34 @@ pub(crate) mod tests {
         }
         let seen = Arc::new(Mutex::new(vec![]));
         let s2 = seen.clone();
-        f.idx.on_status(move |st| s2.lock().unwrap().push(st.clone()));
+        f.idx
+            .on_status(move |st| s2.lock().unwrap().push(st.clone()));
         f.idx.sync(false).unwrap();
         let seen = seen.lock().unwrap();
-        assert!(seen.iter().any(|s| matches!(s, IndexStatus::Indexing { total: 5, .. })), "{seen:?}");
+        assert!(
+            seen.iter()
+                .any(|s| matches!(s, IndexStatus::Indexing { total: 5, .. })),
+            "{seen:?}"
+        );
         assert_eq!(seen.last(), Some(&IndexStatus::Idle));
     }
 
     #[test]
     fn status_serializes_like_the_ts_daemon() {
-        let q = serde_json::to_value(IndexStatus::Queued { count: 2, flush_at: 10, delay_ms: 5 }).unwrap();
-        assert_eq!(q, serde_json::json!({"state": "queued", "count": 2, "flushAt": 10, "delayMs": 5}));
-        assert_eq!(serde_json::to_value(IndexStatus::Idle).unwrap(), serde_json::json!({"state": "idle"}));
+        let q = serde_json::to_value(IndexStatus::Queued {
+            count: 2,
+            flush_at: 10,
+            delay_ms: 5,
+        })
+        .unwrap();
+        assert_eq!(
+            q,
+            serde_json::json!({"state": "queued", "count": 2, "flushAt": 10, "delayMs": 5})
+        );
+        assert_eq!(
+            serde_json::to_value(IndexStatus::Idle).unwrap(),
+            serde_json::json!({"state": "idle"})
+        );
     }
 
     #[test]
@@ -673,7 +855,11 @@ pub(crate) mod tests {
         let f2 = f.clone();
         let h = std::thread::spawn(move || f2.idx.sync(false));
         std::thread::sleep(std::time::Duration::from_millis(150));
-        assert!(matches!(f.idx.status(), IndexStatus::Paused { .. }), "{:?}", f.idx.status());
+        assert!(
+            matches!(f.idx.status(), IndexStatus::Paused { .. }),
+            "{:?}",
+            f.idx.status()
+        );
         f.idx.cancel();
         let r = h.join().unwrap().unwrap();
         assert!(r.indexed < 300);
@@ -691,7 +877,11 @@ pub(crate) mod tests {
         let f2 = f.clone();
         let h = std::thread::spawn(move || f2.idx.sync(false));
         std::thread::sleep(std::time::Duration::from_millis(150));
-        assert_eq!(f.store.chunk_count().unwrap(), 0, "nothing written while paused");
+        assert_eq!(
+            f.store.chunk_count().unwrap(),
+            0,
+            "nothing written while paused"
+        );
         f.idx.resume();
         assert_eq!(h.join().unwrap().unwrap().indexed, 70);
     }

@@ -1,8 +1,38 @@
 //! Hybrid search: sqlite-vec KNN + FTS5 BM25, fused with Reciprocal Rank Fusion (k = 60).
 
+use crate::config::Config;
+use crate::embed::Embedder;
 use crate::store::{Hit, Store};
 use anyhow::Result;
 use serde::Serialize;
+use std::sync::{Arc, RwLock};
+
+/// Everything a search needs, shared by the MCP server, the UI commands and the indexer's owner.
+#[derive(Clone)]
+pub struct Searcher {
+    pub store: Arc<Store>,
+    pub embedder: Arc<dyn Embedder>,
+    pub cfg: Arc<RwLock<Config>>,
+}
+
+impl Searcher {
+    /// Embeds the query and runs a hybrid search with the configured options. Blocking (ORT).
+    pub fn search(&self, query: &str, limit: Option<usize>) -> Result<Vec<SearchHit>> {
+        let (opts, default_limit) = {
+            let c = self.cfg.read().unwrap_or_else(|e| e.into_inner());
+            (
+                SearchOpts {
+                    hybrid: c.hybrid_search,
+                    importance_weight: c.importance_weight,
+                },
+                c.search_results_limit,
+            )
+        };
+        let limit = limit.unwrap_or(default_limit).clamp(1, 100);
+        let qv = self.embedder.embed(&[query.to_string()])?.remove(0);
+        search(&self.store, &qv, query, limit, opts)
+    }
+}
 
 pub const RRF_K: f64 = 60.0;
 
@@ -40,14 +70,28 @@ pub fn fts_query(query: &str) -> Option<String> {
 }
 
 /// `semantic` is (id, distance, importance) in KNN order; `bm25` is ids in BM25 order.
-pub fn fuse(semantic: &[(i64, f64, i64)], bm25: &[i64], limit: usize, opts: SearchOpts) -> Vec<Fused> {
+pub fn fuse(
+    semantic: &[(i64, f64, i64)],
+    bm25: &[i64],
+    limit: usize,
+    opts: SearchOpts,
+) -> Vec<Fused> {
     let mut sem = semantic.to_vec();
     if opts.importance_weight > 0.0 {
-        let boosted = |&(_, d, imp): &(i64, f64, i64)| d - opts.importance_weight * (1.0 + imp as f64).ln();
+        let boosted =
+            |&(_, d, imp): &(i64, f64, i64)| d - opts.importance_weight * (1.0 + imp as f64).ln();
         sem.sort_by(|a, b| boosted(a).total_cmp(&boosted(b)));
     }
     if !opts.hybrid {
-        return sem.iter().take(limit).map(|&(id, d, _)| Fused { id, sources: vec!["semantic"], distance: Some(d) }).collect();
+        return sem
+            .iter()
+            .take(limit)
+            .map(|&(id, d, _)| Fused {
+                id,
+                sources: vec!["semantic"],
+                distance: Some(d),
+            })
+            .collect();
     }
     let mut fused: Vec<(Fused, f64)> = Vec::new();
     let mut add = |id: i64, rank: usize, source: &'static str, distance: Option<f64>| {
@@ -57,7 +101,14 @@ pub fn fuse(semantic: &[(i64, f64, i64)], bm25: &[i64], limit: usize, opts: Sear
                 f.sources.push(source);
                 *s += score;
             }
-            None => fused.push((Fused { id, sources: vec![source], distance }, score)),
+            None => fused.push((
+                Fused {
+                    id,
+                    sources: vec![source],
+                    distance,
+                },
+                score,
+            )),
         }
     };
     for (rank, &(id, d, _)) in sem.iter().enumerate() {
@@ -71,7 +122,13 @@ pub fn fuse(semantic: &[(i64, f64, i64)], bm25: &[i64], limit: usize, opts: Sear
     fused.into_iter().take(limit).map(|(f, _)| f).collect()
 }
 
-pub fn search(store: &Store, query_vec: &[f32], query: &str, limit: usize, opts: SearchOpts) -> Result<Vec<SearchHit>> {
+pub fn search(
+    store: &Store,
+    query_vec: &[f32],
+    query: &str,
+    limit: usize,
+    opts: SearchOpts,
+) -> Result<Vec<SearchHit>> {
     let fetch = if opts.hybrid { limit * 3 } else { limit };
     let knn = store.knn(query_vec, fetch)?;
     let ids: Vec<i64> = knn.iter().map(|(id, _)| *id).collect();
@@ -80,8 +137,10 @@ pub fn search(store: &Store, query_vec: &[f32], query: &str, limit: usize, opts:
         _ => vec![],
     };
     let mut hits = store.hits(&[ids, bm25.clone()].concat())?;
-    let semantic: Vec<(i64, f64, i64)> =
-        knn.iter().filter_map(|&(id, d)| hits.get(&id).map(|h| (id, d, h.importance_score))).collect();
+    let semantic: Vec<(i64, f64, i64)> = knn
+        .iter()
+        .filter_map(|&(id, d)| hits.get(&id).map(|h| (id, d, h.importance_score)))
+        .collect();
     Ok(fuse(&semantic, &bm25, limit, opts)
         .into_iter()
         .filter_map(|f| {
@@ -100,14 +159,29 @@ mod tests {
     use super::*;
     use crate::store::{ChunkRow, FileRecord};
 
-    const HYBRID: SearchOpts = SearchOpts { hybrid: true, importance_weight: 0.0 };
-    const SEMANTIC: SearchOpts = SearchOpts { hybrid: false, importance_weight: 0.0 };
+    const HYBRID: SearchOpts = SearchOpts {
+        hybrid: true,
+        importance_weight: 0.0,
+    };
+    const SEMANTIC: SearchOpts = SearchOpts {
+        hybrid: false,
+        importance_weight: 0.0,
+    };
 
     #[test]
     fn fts_query_quotes_words_and_drops_syntax() {
-        assert_eq!(fts_query("rust ownership").as_deref(), Some("\"rust\" OR \"ownership\""));
-        assert_eq!(fts_query("  \"AND\" (NEAR* -x:y) ").as_deref(), Some("\"AND\" OR \"NEAR\" OR \"x\" OR \"y\""));
-        assert_eq!(fts_query("reflexión área").as_deref(), Some("\"reflexión\" OR \"área\""));
+        assert_eq!(
+            fts_query("rust ownership").as_deref(),
+            Some("\"rust\" OR \"ownership\"")
+        );
+        assert_eq!(
+            fts_query("  \"AND\" (NEAR* -x:y) ").as_deref(),
+            Some("\"AND\" OR \"NEAR\" OR \"x\" OR \"y\"")
+        );
+        assert_eq!(
+            fts_query("reflexión área").as_deref(),
+            Some("\"reflexión\" OR \"área\"")
+        );
         assert_eq!(fts_query("  ?!  "), None);
         assert_eq!(fts_query(""), None);
     }
@@ -117,7 +191,10 @@ mod tests {
         let sem = [(1, 0.1, 0), (2, 0.2, 0), (3, 0.3, 0)];
         let out = fuse(&sem, &[3], 2, SEMANTIC);
         assert_eq!(out.iter().map(|f| f.id).collect::<Vec<_>>(), vec![1, 2]);
-        assert!(out.iter().all(|f| f.sources == vec!["semantic"]), "bm25 ignored when hybrid is off");
+        assert!(
+            out.iter().all(|f| f.sources == vec!["semantic"]),
+            "bm25 ignored when hybrid is off"
+        );
         assert_eq!(out[0].distance, Some(0.1));
     }
 
@@ -144,9 +221,16 @@ mod tests {
     #[test]
     fn fuse_importance_boost_reorders_semantic_hits() {
         let sem = [(1, 0.30, 0), (2, 0.32, 5)];
-        let boosted = SearchOpts { hybrid: false, importance_weight: 0.05 };
+        let boosted = SearchOpts {
+            hybrid: false,
+            importance_weight: 0.05,
+        };
         assert_eq!(fuse(&sem, &[], 10, SEMANTIC)[0].id, 1);
-        assert_eq!(fuse(&sem, &[], 10, boosted)[0].id, 2, "0.32 - 0.05·ln 6 < 0.30");
+        assert_eq!(
+            fuse(&sem, &[], 10, boosted)[0].id,
+            2,
+            "0.32 - 0.05·ln 6 < 0.30"
+        );
     }
 
     #[test]
@@ -157,12 +241,31 @@ mod tests {
 
     fn seeded() -> Store {
         let s = Store::open_in_memory("m", 2).unwrap();
-        let rows = [("rust borrow checker", [1.0, 0.0]), ("gardening tomatoes", [0.0, 1.0]), ("rust in iron pipes", [0.1, 1.0])];
-        let chunks = rows.iter().enumerate().map(|(i, (t, v))| ChunkRow {
-            chunk_index: i, heading: String::new(), context_path: String::new(), text: t.to_string(),
-            embed_hash: format!("h{i}"), vector: v.to_vec(),
-        }).collect();
-        s.replace_file(&FileRecord { path: "/v/a.md".into(), mtime_ns: 1, content_hash: "c".into(), tags: String::new(), chunks }).unwrap();
+        let rows = [
+            ("rust borrow checker", [1.0, 0.0]),
+            ("gardening tomatoes", [0.0, 1.0]),
+            ("rust in iron pipes", [0.1, 1.0]),
+        ];
+        let chunks = rows
+            .iter()
+            .enumerate()
+            .map(|(i, (t, v))| ChunkRow {
+                chunk_index: i,
+                heading: String::new(),
+                context_path: String::new(),
+                text: t.to_string(),
+                embed_hash: format!("h{i}"),
+                vector: v.to_vec(),
+            })
+            .collect();
+        s.replace_file(&FileRecord {
+            path: "/v/a.md".into(),
+            mtime_ns: 1,
+            content_hash: "c".into(),
+            tags: String::new(),
+            chunks,
+        })
+        .unwrap();
         s
     }
 
@@ -172,7 +275,10 @@ mod tests {
         let out = search(&s, &[1.0, 0.0], "rust", 10, HYBRID).unwrap();
         assert_eq!(out[0].hit.text, "rust borrow checker");
         assert_eq!(out[0].match_sources, vec!["semantic", "bm25"]);
-        let pipes = out.iter().find(|h| h.hit.text == "rust in iron pipes").unwrap();
+        let pipes = out
+            .iter()
+            .find(|h| h.hit.text == "rust in iron pipes")
+            .unwrap();
         assert!(pipes.match_sources.contains(&"bm25"));
         let s0 = out[0].score.unwrap();
         assert!((0.0..=1.0).contains(&s0) && s0 > 0.99);
@@ -191,7 +297,17 @@ mod tests {
         let s = seeded();
         let out = search(&s, &[1.0, 0.0], "rust", 1, HYBRID).unwrap();
         let v = serde_json::to_value(&out[0]).unwrap();
-        for key in ["file_path", "heading", "context_path", "chunk_index", "text", "tags", "importance_score", "match_sources", "score"] {
+        for key in [
+            "file_path",
+            "heading",
+            "context_path",
+            "chunk_index",
+            "text",
+            "tags",
+            "importance_score",
+            "match_sources",
+            "score",
+        ] {
             assert!(v.get(key).is_some(), "missing {key}");
         }
     }
