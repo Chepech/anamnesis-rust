@@ -535,8 +535,10 @@ pub(crate) mod tests {
                 idx,
             }
         }
+        /// `rel` uses `/`; joined per component so Windows paths use `\` throughout.
         pub fn path(&self, rel: &str) -> PathBuf {
-            self.dir.path().join(rel)
+            rel.split('/')
+                .fold(self.dir.path().to_path_buf(), |p, c| p.join(c))
         }
         pub fn write(&self, rel: &str, body: &str) -> PathBuf {
             let p = self.path(rel);

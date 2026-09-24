@@ -36,7 +36,13 @@ impl Watcher {
     ) -> Result<Watcher> {
         let (tx, rx) = mpsc::channel::<Cmd>();
         let paused: Arc<Mutex<HashSet<PathBuf>>> = Arc::default();
-        let (etx, p2, roots) = (tx.clone(), paused.clone(), dirs.to_vec());
+        // FSEvents reports canonical paths (/private/var/… for /var/…); map them back to the
+        // configured watch dir so filters, pause and the index all see one spelling.
+        let roots: Vec<(PathBuf, PathBuf)> = dirs
+            .iter()
+            .map(|d| (d.canonicalize().unwrap_or_else(|_| d.clone()), d.clone()))
+            .collect();
+        let (etx, p2) = (tx.clone(), paused.clone());
         let inner = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             let Ok(ev) = res else { return };
             let structural = match ev.kind {
@@ -48,7 +54,14 @@ impl Watcher {
             };
             let paused = p2.lock().unwrap();
             for p in ev.paths {
-                if !roots.contains(&p) && accept(&p) && !paused.iter().any(|d| p.starts_with(d)) {
+                let p = roots
+                    .iter()
+                    .find_map(|(canon, orig)| p.strip_prefix(canon).ok().map(|rel| orig.join(rel)))
+                    .unwrap_or(p);
+                if !roots.iter().any(|(_, orig)| *orig == p)
+                    && accept(&p)
+                    && !paused.iter().any(|d| p.starts_with(d))
+                {
                     let _ = etx.send(Cmd::Event(p, structural));
                 }
             }
