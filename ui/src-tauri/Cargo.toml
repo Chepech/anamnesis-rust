@@ -1,0 +1,23 @@
+[package]
+name = "anamnesis"
+description = "Anamnesis tray app: local semantic search for your notes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[build-dependencies]
+tauri-build = "2.6.3"
+
+[dependencies]
+anamnesis-core = { version = "0.1.0", path = "../../crates/core" }
+anyhow = "1.0.104"
+serde_json = "1.0.151"
+tauri = { version = "2.11.6", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2.5.1"
+tauri-plugin-dialog = "2.7.3"
+tauri-plugin-opener = "2.5.5"
+tauri-plugin-single-instance = "2.4.5"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync"] }
+tracing = "0.1.44"

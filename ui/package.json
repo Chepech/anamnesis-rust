@@ -1,0 +1,30 @@
+{
+  "name": "anamnesis-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.mjs production",
+    "dev": "node esbuild.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "@tauri-apps/plugin-opener": "^2.5.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "umap-js": "^1.4.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.5",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "esbuild": "^0.24.2",
+    "jsdom": "^30.1.1",
+    "typescript": "5.7.2",
+    "vitest": "^5.0.1"
+  }
+}

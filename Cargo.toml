@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "ui/src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Hector Nevarez <chepech@gmail.com>"]
+repository = "https://github.com/Chepech/anamnesis-rust"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

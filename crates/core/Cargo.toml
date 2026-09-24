@@ -1,0 +1,47 @@
+[package]
+name = "anamnesis-core"
+description = "Anamnesis core: indexer, hybrid search store and MCP server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "anamnesis_core"
+
+[[bin]]
+name = "anamnesis-core"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+axum = "0.8.9"
+blake3 = "1.8.7"
+dirs = "7.0.0"
+dom_smoothie = "0.18.2"
+fastembed = { version = "7.1.0", default-features = false, features = ["ort-download-binaries-rustls-tls", "hf-hub-rustls-tls"] }
+globset = "0.4.20"
+gray_matter = "0.3.2"
+htmd = "0.5.5"
+ignore = "0.4.33"
+notify = "8.2.0"
+pdf-extract = "0.12.1"
+quick-xml = "0.42.0"
+rayon = "1.12.0"
+regex = "1.13.1"
+rmcp = { version = "3.4.1", features = ["server", "macros", "transport-streamable-http-server", "transport-io"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+schemars = "1.2.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sqlite-vec = "0.1.9"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net"] }
+tokio-util = "0.7.19"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+rmcp = { version = "3.4.1", features = ["client", "transport-streamable-http-client-reqwest"] }
+tempfile = "3.27.0"
