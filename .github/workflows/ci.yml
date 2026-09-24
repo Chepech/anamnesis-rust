@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  branch-gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check source branch
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          if [[ "$BRANCH" == release/* ]] || [[ "$BRANCH" == hotfix/* ]]; then
+            echo "✓ Branch '$BRANCH' is allowed to merge into main"
+          else
+            echo "✗ Branch '$BRANCH' is not allowed to merge into main"
+            echo ""
+            echo "Only release/* and hotfix/* branches can merge to main."
+            echo "Feature branches should target a release/ branch first."
+            exit 1
+          fi
+
+  # Full workspace (core + Tauri shell) on Linux: lint, UI tests, Rust tests.
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: ui/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install UI dependencies
+        run: pnpm --dir ui install --frozen-lockfile
+
+      - name: UI type check
+        run: pnpm --dir ui typecheck
+
+      - name: UI tests
+        run: pnpm --dir ui test
+
+      - name: Build UI
+        run: pnpm --dir ui build
+
+      - name: Rust format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --workspace
+
+  # Core on the other two desktop OSes: paths, file watching and SQLite differ per platform.
+  core:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Core tests
+        run: cargo test -p anamnesis-core

@@ -1,0 +1,122 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+  # release.yml dispatches this after pushing the tag: tags pushed with GITHUB_TOKEN
+  # do not trigger push workflows, but workflow_dispatch is allowed.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish (e.g. v0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  draft-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.release.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+
+      - name: Compute changelog
+        id: changelog
+        shell: bash
+        run: |
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -v "^${TAG}$" | head -1 || true)
+          if [ -n "$PREVIOUS_TAG" ]; then
+            LOG=$(git log "${PREVIOUS_TAG}..${TAG}" --oneline --no-merges)
+          else
+            LOG=$(git log "${TAG}" --oneline --no-merges)
+          fi
+          echo "CHANGELOG<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$LOG" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create draft release
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          draft: true
+          name: "Anamnesis ${{ env.TAG }}"
+          body: |
+            <!-- Edit this section before publishing: it is pre-filled from git log. -->
+
+            ${{ steps.changelog.outputs.CHANGELOG }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: draft-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            headless: anamnesis-core-linux-x64
+          - os: macos-latest
+            headless: anamnesis-core-macos-arm64
+          - os: windows-latest
+            headless: anamnesis-core-windows-x64.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Install Tauri system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: ui/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install UI dependencies
+        run: pnpm --dir ui install --frozen-lockfile
+
+      - name: Build and upload installers to the draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: ui
+          tauriScript: pnpm tauri
+          releaseId: ${{ needs.draft-release.outputs.release_id }}
+
+      - name: Build and upload headless core
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cargo build --release -p anamnesis-core
+          BIN=target/release/anamnesis-core
+          [ -f "$BIN.exe" ] && BIN="$BIN.exe"
+          cp "$BIN" "${{ matrix.headless }}"
+          gh release upload "$TAG" "${{ matrix.headless }}" --clobber

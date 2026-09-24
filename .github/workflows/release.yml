@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g. 0.2.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate version format
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "✗ Invalid version format: '$VERSION'"
+            echo "  Must be semver: X.Y.Z (e.g. 0.2.0, 1.0.0)"
+            exit 1
+          fi
+          echo "✓ Version format valid: $VERSION"
+
+      - name: Validate version is greater than latest tag
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          LATEST_TAG=$(git tag --sort=-version:refname | head -1 | sed 's/^v//')
+
+          if [ -z "$LATEST_TAG" ]; then
+            echo "✓ No existing tags: any version is valid"
+            exit 0
+          fi
+
+          echo "  Latest tag: v$LATEST_TAG"
+          echo "  New version: v$VERSION"
+
+          IFS='.' read -r CUR_MAJOR CUR_MINOR CUR_PATCH <<< "$LATEST_TAG"
+          IFS='.' read -r NEW_MAJOR NEW_MINOR NEW_PATCH <<< "$VERSION"
+
+          if [ "$NEW_MAJOR" -gt "$CUR_MAJOR" ]; then
+            echo "✓ Major version bump"; exit 0
+          elif [ "$NEW_MAJOR" -eq "$CUR_MAJOR" ] && [ "$NEW_MINOR" -gt "$CUR_MINOR" ]; then
+            echo "✓ Minor version bump"; exit 0
+          elif [ "$NEW_MAJOR" -eq "$CUR_MAJOR" ] && [ "$NEW_MINOR" -eq "$CUR_MINOR" ] && [ "$NEW_PATCH" -gt "$CUR_PATCH" ]; then
+            echo "✓ Patch version bump"; exit 0
+          fi
+
+          echo "✗ Version $VERSION is not greater than latest tag v$LATEST_TAG"
+          exit 1
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Bump version (Cargo workspace + UI)
+        id: bump
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          CURRENT=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]*)"/\1/')
+
+          if [ "$CURRENT" = "$VERSION" ]; then
+            # Re-dispatched after the version-bump PR was merged: main is already
+            # at this version, so just cut the tag.
+            echo "✓ Already at $VERSION: skipping straight to tagging"
+            echo "already_bumped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          sed -i "0,/^version = \"[^\"]*\"/s//version = \"$VERSION\"/" Cargo.toml
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" ui/package.json
+          cargo update --workspace
+          echo "already_bumped=false" >> "$GITHUB_OUTPUT"
+          grep -m1 '^version' Cargo.toml; grep '"version"' ui/package.json
+
+      - name: Open version-bump PR
+        if: steps.bump.outputs.already_bumped == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          BRANCH="hotfix/release-v$VERSION"
+
+          # main is protected: the bump lands through a PR on a hotfix/* branch so it
+          # clears branch-gate. Merge it, then re-run this workflow with the same version.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add Cargo.toml Cargo.lock ui/package.json
+          git commit -m "chore: bump version to $VERSION"
+          git push origin "$BRANCH"
+
+          PR_URL=$(gh pr create --title "chore: bump version to $VERSION" \
+            --body "Automated version bump for release v$VERSION." \
+            --base main --head "$BRANCH")
+
+          echo "::notice::Opened $PR_URL: merge it, then re-run this workflow with version=$VERSION to cut the tag."
+
+      - name: Create tag and start publish
+        if: steps.bump.outputs.already_bumped == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
+          # A tag pushed with GITHUB_TOKEN does not trigger publish.yml's push trigger.
+          gh workflow run publish.yml -f tag="v$VERSION"
+          echo "✓ Tag v$VERSION pushed, publish.yml dispatched"
