@@ -110,6 +110,15 @@ jobs:
           tauriScript: pnpm tauri
           releaseId: ${{ needs.draft-release.outputs.release_id }}
 
+      - name: Verify macOS bundle signature
+        if: runner.os == 'macOS'
+        run: |
+          DMG=$(ls target/release/bundle/dmg/*.dmg)
+          MNT=$(mktemp -d)
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MNT"
+          codesign --verify --deep --strict --verbose=2 "$MNT/Anamnesis.app"
+          hdiutil detach "$MNT"
+
       - name: Build and upload headless core
         shell: bash
         env:

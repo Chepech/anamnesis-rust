@@ -52,6 +52,15 @@ jobs:
           projectPath: ui
           tauriScript: pnpm tauri
 
+      - name: Verify macOS bundle signature
+        if: runner.os == 'macOS'
+        run: |
+          DMG=$(ls target/release/bundle/dmg/*.dmg)
+          MNT=$(mktemp -d)
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MNT"
+          codesign --verify --deep --strict --verbose=2 "$MNT/Anamnesis.app"
+          hdiutil detach "$MNT"
+
       - name: Build headless core
         shell: bash
         run: |

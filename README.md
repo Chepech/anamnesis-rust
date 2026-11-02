@@ -31,7 +31,7 @@ Download the latest release for your platform from [Releases](../../releases):
 | Linux x64 | `Anamnesis_x.y.z_amd64.AppImage` or `.deb` |
 | Headless (any) | `anamnesis-core-<os>` (no UI, MCP only) |
 
-The builds are not code-signed yet. On Windows, SmartScreen may show "Windows protected your PC": choose **More info → Run anyway**. On macOS, right-click the app and choose **Open** the first time.
+The builds are not code-signed yet. On Windows, SmartScreen may show "Windows protected your PC": choose **More info → Run anyway**. On macOS the app is ad-hoc signed but not notarized: the first launch shows "Apple could not verify...". Click **Done**, then open **System Settings → Privacy & Security** and choose **Open Anyway** (on macOS 14 and earlier, right-clicking the app and choosing **Open** also works). If an older build says the app "is damaged", run `xattr -cr /Applications/Anamnesis.app`.
 
 On first launch the embedding model (~90 MB) downloads once into the app data folder.
 
