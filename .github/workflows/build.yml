@@ -52,6 +52,10 @@ jobs:
           projectPath: ui
           tauriScript: pnpm tauri
 
+      - name: Verify macOS bundle signature
+        if: runner.os == 'macOS'
+        run: codesign --verify --deep --strict --verbose=2 target/release/bundle/macos/Anamnesis.app
+
       - name: Build headless core
         shell: bash
         run: |
